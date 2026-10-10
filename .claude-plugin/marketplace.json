@@ -1,0 +1,12 @@
+{
+  "name": "polis",
+  "description": "Polis, a project dashboard and isometric city map mod for Claude Code",
+  "owner": { "name": "Jimmy Huynh" },
+  "plugins": [
+    {
+      "name": "polis",
+      "source": "./",
+      "description": "A project dashboard and isometric city map: progress, tasks, agents, resources, processes and skills"
+    }
+  ]
+}
