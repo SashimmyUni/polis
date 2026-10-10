@@ -1,0 +1,1000 @@
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register, UiOpenResult } from 'claude-code'
+
+import type { AgentRun, AgentRunStatus, Proc, Turn, Usage, ViewName } from '../types'
+import {
+  SIZES,
+  SIZING_RUBRIC,
+  asHistory,
+  asProject,
+  bumpFamily,
+  clip,
+  createTask,
+  endProc,
+  expectedFor,
+  heuristicSize,
+  hitFile,
+  isLive,
+  matchTask,
+  mergeProject,
+  mergeTodos,
+  newProject,
+  patchTask,
+  pick,
+  pushActivity,
+  recordTasks,
+  reconcileProcs,
+  shouldAskModel,
+  suggestSkills,
+  taskStats,
+  upsertProc,
+} from './logic'
+import type { EstimateMode } from './logic'
+import { VIEWS, familyOf } from './theme'
+import { band, pane, summary } from './views'
+import type { Actions, Model } from './views'
+
+const PANE = 'polis'
+const TITLE = 'Polis'
+const PROJECT_TOOL = 'mcp__polis__project'
+
+// The room the pane asks for where a surface lets a plugin say: enough for
+// the city at a readable size while the conversation keeps about half the
+// window. A request, not a grant: the person's own size wins, and a pane
+// left narrow gets the narrow layout instead.
+const ROOM = { rows: 46, columns: 68 } as const
+
+const IDLE: Turn = {
+  id: null,
+  isWorking: false,
+  startedAt: 0,
+  endedAt: 0,
+  expected: null,
+  tokens: 0,
+  outTokens: 0,
+  cacheRead: 0,
+  tools: 0,
+  steps: 0,
+  agents: 0,
+  hasWarned: false,
+}
+
+const UNMEASURED: Usage = {
+  contextTokens: 0,
+  contextWindow: 0,
+  contextPercent: 0,
+  rateLimits: [],
+  costUsd: 0,
+  sessionTokens: 0,
+  mainFamilies: {},
+  hasWarnedContext: false,
+}
+
+const tasks = atom({ plugin: 'polis', key: 'tasks' } as const, [])
+const agents = atom({ plugin: 'polis', key: 'agents' } as const, [])
+const procs = atom({ plugin: 'polis', key: 'procs' } as const, [])
+const turn = atom({ plugin: 'polis', key: 'turn' } as const, IDLE)
+const usage = atom({ plugin: 'polis', key: 'usage' } as const, UNMEASURED)
+const history = atom({ plugin: 'polis', key: 'history' } as const, [])
+const project = atom({ plugin: 'polis', key: 'project' } as const, null)
+const skills = atom({ plugin: 'polis', key: 'skills' } as const, {
+  available: [],
+  used: {},
+  suggested: [],
+})
+const ui = atom({ plugin: 'polis', key: 'ui' } as const, {
+  view: 'overview',
+  isBandHidden: false,
+  hasOpened: false,
+})
+const activity = atom({ plugin: 'polis', key: 'activity' } as const, [])
+const files = atom({ plugin: 'polis', key: 'files' } as const, [])
+const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
+
+const GUIDANCE = {
+  id: 'polis:guidance',
+  scope: 'session',
+  text: [
+    'The person watches a live project dashboard (Polis). For work of three or more steps,',
+    'record the steps with the task tool before starting, mark each one in progress as you',
+    'begin it and completed as soon as it is verified. When creating a task, set',
+    '`metadata.area` to a short work-area name (for example api, ui, tests, docs) and, for a',
+    "sub-task, `metadata.parent` to its parent task's id. Where this session has no task",
+    `tool, record and update the same steps through the \`tasks\` of the ${PROJECT_TOOL} tool`,
+    `instead. For project-level work, record the project's milestones with ${PROJECT_TOOL}`,
+    'once the plan is known, and update them whenever a milestone starts or completes.',
+  ].join(' '),
+} as const
+
+const PROJECT_SPEC = {
+  name: 'project',
+  description: [
+    "Records this project's plan on the person's Polis dashboard: its milestones and the",
+    'current phase. Call it once the plan for project-level work is known, and again when a',
+    'milestone starts or completes. Milestones are matched by `id`: send only the ones that',
+    'changed. The record is kept across sessions for this project folder. In a session with',
+    'no task tool of its own, `tasks` records the steps of the work at hand the same way:',
+    'send each task once with its subject and area, then again by `id` as its status changes.',
+  ].join(' '),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: "The project's display name." },
+      phase: { type: 'string', description: 'A few words on what is happening now.' },
+      milestones: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'A short stable slug.' },
+            title: { type: 'string' },
+            status: { type: 'string', enum: ['planned', 'active', 'done'] },
+          },
+          required: ['id'],
+        },
+      },
+      tasks: {
+        type: 'array',
+        description: 'Only where the session has no task tool: the steps of the current work.',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', description: 'A short stable slug.' },
+            subject: { type: 'string' },
+            status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'deleted'] },
+            area: { type: 'string', description: 'A short work-area name: api, ui, tests, docs.' },
+            parent: { type: 'string', description: 'The id of the task this is a sub-task of.' },
+            owner: { type: 'string', description: 'The name of the agent working on it.' },
+            blockedBy: { type: 'array', items: { type: 'string' } },
+            activeForm: { type: 'string', description: 'Shown while in progress: "Running tests".' },
+          },
+          required: ['id'],
+        },
+      },
+    },
+  },
+  isDeferred: false,
+} as const
+
+const WORKER_PROMPT = [
+  'You are a worker in an orchestrated run. You are given one self-contained',
+  'task with the files or area it covers and what done looks like.',
+  'Do exactly that task and stay inside its scope: another worker may be',
+  'editing other files at the same time.',
+  'End with a short report: what you changed (paths), how you checked it,',
+  'and anything you could not finish or that looked wrong.',
+].join(' ')
+
+const VERIFIER_PROMPT = [
+  'You are the verifier in an orchestrated run. You are given a claim about',
+  'finished work. Check it against the actual files and by running the',
+  'relevant tests or commands; never take the claim on trust and never edit',
+  'files. Answer PASS or FAIL first, then the evidence: commands run, their',
+  'output, and each defect with its path and line.',
+].join(' ')
+
+const orchestrationBrief = (goal: string): string =>
+  [
+    'Act as the orchestrator for the goal below. I am asking for subagents here: use them.',
+    '',
+    `1. Plan. Break the goal into 3 to 8 tasks and record every one with the task tool before any work starts, each with \`metadata.area\` (where this session has no task tool, through the \`tasks\` of ${PROJECT_TOOL}, each with its \`area\`). Note which tasks depend on each other.`,
+    '2. Delegate. Start every independent task as its own Agent call, all in one message so they run in parallel. Give each a self-contained brief: the task, the files or area, what done looks like. Use `polis:worker` for implementation, `Explore` for read-only searching, `polis:verifier` for checking. Keep tiny or strictly sequential tasks for yourself, and never let two agents write the same files.',
+    '3. Track. Mark a task in progress as it starts and completed only once it is verified.',
+    '4. Verify. Treat each agent report as a claim: read the diff or run the tests before accepting it, and send failed work back with what was wrong.',
+    '5. Report. Finish with what was done, what failed and what is left.',
+    '',
+    `Goal: ${goal}`,
+  ].join('\n')
+
+// The tools whose result can name work left running, or work stopped.
+const BACKGROUND = new Set([
+  'Bash',
+  'PowerShell',
+  'Monitor',
+  'Workflow',
+  'CronCreate',
+  'CronDelete',
+  'TaskStop',
+])
+
+const say = ($: EngineInterface, where: string, error: unknown): void => {
+  $.ui.log(`polis: ${where}: ${String(error)}`)
+}
+
+const note = async ($: EngineInterface, kind: string, text: string): Promise<void> => {
+  const at = await $.clock.now()
+  await update($, activity, list => pushActivity(list, { at, kind, text }))
+}
+
+const saveProject = async ($: EngineInterface): Promise<void> => {
+  const record = await read($, project)
+  if (record !== null) await $.store.set(`project:${record.root}`, record)
+}
+
+const openPane = ($: EngineInterface) => $.ui.open({ id: PANE, title: TITLE, ...ROOM })
+
+// The room each surface last gave the band and the pane, kept in the store
+// so a drawing that looks wrong somewhere can be explained from its numbers.
+let rooms: { [site: string]: string } = {}
+let hasNewRoom = false
+
+const measure = (site: string, room: object): void => {
+  const text = JSON.stringify(room)
+  if (rooms[site] === text) return
+  rooms = { ...rooms, [site]: text }
+  hasNewRoom = true
+}
+
+// Whether any surface has asked for the band: the engine raises `AbovePrompt`
+// on some surfaces only, and a session drawn on none of them has no band.
+let isBandAsked = false
+
+// The status line stands in for the band while the band is hidden, and where
+// no surface draws one.
+const refresh = async ($: EngineInterface, shouldOpen: boolean): Promise<void> => {
+  const list = await read($, tasks)
+  const runs = await read($, agents)
+  const state = await read($, ui)
+  const stats = taskStats(list)
+  const live = runs.filter(isLive).length
+
+  if ((isBandAsked && !state.isBandHidden) || (stats.total === 0 && live === 0)) {
+    $.ui.status(undefined)
+  } else {
+    const parts = []
+    if (stats.total > 0) parts.push(`${stats.done}/${stats.total} tasks`)
+    if (live > 0) parts.push(`${live} agent${live === 1 ? '' : 's'} running`)
+    $.ui.status(`◆ ${parts.join(' · ')}`)
+  }
+
+  if (shouldOpen && !state.hasOpened && (stats.total > 0 || runs.length > 0)) {
+    await update($, ui, value => ({ ...value, hasOpened: true }))
+    void openPane($).catch(() => undefined)
+  }
+}
+
+const countDone = async ($: EngineInterface, gained: number): Promise<void> => {
+  if (gained <= 0) return
+  await update($, project, record =>
+    record === null ? record : { ...record, tasksDone: record.tasksDone + gained },
+  )
+  await saveProject($)
+}
+
+const clearFinished = async ($: EngineInterface): Promise<void> => {
+  await update($, tasks, list => list.filter(task => task.status !== 'completed'))
+  await update($, agents, list => list.filter(isLive))
+  await update($, procs, list => list.filter(proc => proc.status === 'running'))
+  await refresh($, false)
+}
+
+const stopTurn = async ($: EngineInterface): Promise<void> => {
+  const { id, isWorking } = await read($, turn)
+  if (isWorking && id !== null) await $.turn.abort({ turnId: id })
+}
+
+const openAt = async ($: EngineInterface, view: ViewName | undefined): Promise<UiOpenResult> => {
+  await update($, ui, value => ({
+    ...value,
+    isBandHidden: false,
+    hasOpened: true,
+    view: view ?? value.view,
+  }))
+
+  return openPane($)
+}
+
+const actionsOf = ($: EngineInterface): Actions => ({
+  setView: view => update($, ui, value => ({ ...value, view })),
+  openCity: () => openAt($, 'city'),
+  hideBand: async () => {
+    await update($, ui, value => ({ ...value, isBandHidden: true }))
+    await refresh($, false)
+  },
+  // A surface with a composer of its own takes no fill: say what to type.
+  orchestrate: async () => {
+    const filled = await $.prompt.fill({ text: '/orchestrate ', mode: 'replace' })
+    if (!filled.isFilled) $.ui.toast('Type /orchestrate <goal> to plan it and run it with agents')
+  },
+  clearFinished: () => clearFinished($),
+  stopTurn: () => stopTurn($),
+})
+
+const load = async ($: EngineInterface, columns: number): Promise<Model> => {
+  await read($, tick)
+
+  return {
+    now: await $.clock.now(),
+    columns,
+    tasks: await read($, tasks),
+    agents: await read($, agents),
+    procs: await read($, procs),
+    turn: await read($, turn),
+    usage: await read($, usage),
+    history: await read($, history),
+    project: await read($, project),
+    skills: await read($, skills),
+    ui: await read($, ui),
+    activity: await read($, activity),
+    files: await read($, files),
+  }
+}
+
+export const register: Register = (on, options) => {
+  const mode: EstimateMode =
+    options.estimate === 'history' || options.estimate === 'model' ? options.estimate : 'both'
+  const hasGuidance = options.guidance !== false
+  const shouldAutoOpen = options.autoOpen !== false
+  // What the person has asked for lately, for the skill suggestions.
+  let asked: string[] = []
+
+  on('session.start', async ($, e, next) => {
+    await $.command.register({
+      name: 'city',
+      description: 'Open the Polis project dashboard and city map',
+      argumentHint: '[overview|city|tasks|agents|resources|skills]',
+    })
+    await $.command.register({
+      name: 'orchestrate',
+      description: 'Plan a goal into tasks and run them with parallel agents',
+      argumentHint: '<goal>',
+    })
+
+    try {
+      if (hasGuidance) await $.tool.register(PROJECT_SPEC)
+      await $.agent.register({
+        name: 'worker',
+        description:
+          'Carries out one self-contained task of an orchestrated run and reports what it changed',
+        prompt: WORKER_PROMPT,
+      })
+      await $.agent.register({
+        name: 'verifier',
+        description:
+          'Checks a claim about finished work against the files and tests, read-only, and answers PASS or FAIL with evidence',
+        prompt: VERIFIER_PROMPT,
+        tools: ['Read', 'Grep', 'Glob', 'Bash'],
+      })
+    } catch (error) {
+      say($, 'registering its tool and agent types', error)
+    }
+
+    try {
+      const now = await $.clock.now()
+      const repo = await $.session.repo().catch(() => null)
+      const root = repo?.root ?? e.cwd
+      const sessionId = await $.session.id()
+      // A reload runs this again while the session goes on: what the session
+      // already holds for this project is newer than what the store kept.
+      const held = await read($, project)
+      const saved =
+        held !== null && held.root === root
+          ? held
+          : asProject(await $.store.get(`project:${root}`), root, now)
+      const record =
+        saved.lastSessionId === sessionId
+          ? { ...saved, lastActive: now }
+          : { ...saved, lastActive: now, lastSessionId: sessionId, sessions: saved.sessions + 1 }
+      await update($, project, () => record)
+      await saveProject($)
+      const kept = await $.store.get('rooms')
+      if (typeof kept === 'object' && kept !== null) {
+        rooms = { ...(kept as { [site: string]: string }), ...rooms }
+      }
+      const past = asHistory(await $.store.get(`history:${root}`))
+      await update($, history, list => (list.length > past.length ? list : past))
+
+      const commands = await $.command.list()
+      const available = commands
+        .filter(command => command.source !== 'builtin' && command.plugin !== 'polis')
+        .slice(0, 120)
+        .map(command => ({
+          name: command.name,
+          description: clip(command.description, 160),
+          source: command.plugin ?? command.source,
+        }))
+      await update($, skills, value => ({ ...value, available }))
+
+      const measured = await $.session.usage()
+      await update($, usage, value => ({
+        ...value,
+        contextTokens: measured.context.tokens ?? value.contextTokens,
+        contextWindow: measured.context.window,
+        contextPercent: measured.context.percent ?? value.contextPercent,
+        costUsd: measured.cost?.usd ?? value.costUsd,
+      }))
+    } catch (error) {
+      say($, 'loading the project', error)
+    }
+
+    // A pane left open across a reload asks again for its room: an open sets
+    // the size anew, and the person's own size still wins.
+    try {
+      const open = await $.ui.panes()
+      if (open.some(one => one.id === PANE)) void openPane($).catch(() => undefined)
+    } catch (error) {
+      say($, 'reopening the pane', error)
+    }
+
+    // Elapsed times in the pane move only while something is running.
+    $.clock.every(5000, () => {
+      void (async () => {
+        const { isWorking } = await read($, turn)
+        const runs = await read($, agents)
+        if (isWorking || runs.some(isLive)) await update($, tick, count => count + 1)
+        if (hasNewRoom) {
+          hasNewRoom = false
+          await $.store.set('rooms', rooms)
+        }
+      })().catch(() => undefined)
+    })
+
+    return next(e)
+  })
+
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      await update($, tasks, () => [])
+      await update($, agents, () => [])
+      await update($, procs, () => [])
+      await update($, turn, () => IDLE)
+      await update($, activity, () => [])
+      await update($, files, () => [])
+      await refresh($, false)
+    }
+
+    return next(e)
+  })
+
+  if (hasGuidance) {
+    on('prompt.compose', async ($, e, next) => {
+      const composed = await next(e)
+      // Where nothing draws there is no dashboard to keep current.
+      if (e.surfaces.length === 0) return composed
+
+      return { sections: [...composed.sections, GUIDANCE] }
+    })
+
+    // The mod's own tool writes nothing but the mod's own record.
+    on('tool.check', { tool: PROJECT_TOOL }, () => ({ decision: 'allow' }))
+
+    on('tool.call', { tool: PROJECT_TOOL }, async ($, e) => {
+      const now = await $.clock.now()
+      const before = (await read($, project)) ?? newProject(await $.session.cwd(), now)
+      const after = mergeProject(before, {
+        name: e.name,
+        phase: e.phase,
+        milestones: e.milestones,
+      })
+      await update($, project, () => after)
+      await saveProject($)
+      const done = after.milestones.filter(one => one.status === 'done').length
+      if (e.milestones !== undefined) {
+        await note($, 'project', `Plan updated: ${done}/${after.milestones.length} milestones done`)
+      }
+
+      // The steps of the work at hand, where the host has no task tool to watch.
+      let steps = ''
+      if (e.tasks !== undefined) {
+        const had = taskStats(await read($, tasks)).done
+        const list = await update($, tasks, value => recordTasks(value, e.tasks))
+        const stats = taskStats(list)
+        await countDone($, stats.done - had)
+        // Whoever owns a task in progress stands at its building.
+        await update($, agents, runs =>
+          runs.map(run => {
+            const mine = list.find(
+              task => task.status === 'in_progress' && task.owner !== undefined && task.owner === run.name,
+            )
+
+            return isLive(run) && mine !== undefined ? { ...run, taskId: mine.id } : run
+          }),
+        )
+        await refresh($, shouldAutoOpen)
+        steps = ` Tasks: ${stats.done} done, ${stats.active} active, ${stats.waiting} waiting.`
+      }
+
+      return {
+        result: `Recorded. ${after.name}: ${done} of ${after.milestones.length} milestones done${
+          after.phase === '' ? '' : `; phase: ${after.phase}`
+        }.${steps}`,
+      }
+    })
+  }
+
+  on('command.run', { command: 'city' }, async ($, e) => {
+    const wanted = e.args.trim().toLowerCase()
+    const view = VIEWS.find(one => one.name === wanted)?.name
+    // Where no surface draws (an editor's chat panel, a headless run) the
+    // dashboard is given as the command's own text.
+    if ((await $.session.surfaces()).length === 0) {
+      return { text: summary(await load($, 80)) }
+    }
+    const opened = await openAt($, view ?? (wanted === '' ? 'city' : undefined))
+    if (opened.isPlaced) return { text: 'Polis opened.' }
+    const board = summary(await load($, 80))
+
+    return { text: `Polis is open but not drawn here yet: ${opened.reason}\n\n${board}` }
+  })
+
+  on('command.run', { command: 'orchestrate' }, async ($, e) => {
+    const goal = e.args.trim()
+    if (goal === '') {
+      return { text: 'Usage: /orchestrate <goal>' }
+    }
+    await update($, ui, value => ({ ...value, hasOpened: true }))
+    void openPane($).catch(() => undefined)
+    // A command.run hook holds the turn a submit would wait on: submit after it.
+    $.clock.after(50, () => {
+      void $.prompt
+        .submit({ text: orchestrationBrief(goal), asUser: true })
+        .catch(error => say($, 'submitting the brief', error))
+    })
+
+    return { text: `Orchestrating: ${goal}` }
+  })
+
+  on('turn.start', async ($, e, next) => {
+    try {
+      const now = await $.clock.now()
+      const past = await read($, history)
+      const size = heuristicSize(e.text)
+      await update($, turn, () => ({
+        ...IDLE,
+        id: e.turnId,
+        isWorking: true,
+        startedAt: now,
+        endedAt: now,
+        expected: expectedFor(size, 'heuristic', past),
+      }))
+
+      asked = [...asked, e.text.slice(0, 2000)].slice(-3)
+      const subjects = (await read($, tasks)).map(task => task.subject)
+      const corpus = [...asked, ...subjects].join(' ')
+      await update($, skills, value => ({
+        ...value,
+        suggested: suggestSkills(value.available, value.used, corpus),
+      }))
+
+      if (shouldAskModel(mode, e.text, size) && (await $.session.surfaces()).length > 0) {
+        const { turnId, text } = e
+        // Sized on a timer, so the prompt never waits on the small model.
+        $.clock.after(10, () => {
+          void (async () => {
+            const label = await $.model.classify(`${SIZING_RUBRIC}\n${text.slice(0, 4000)}`, SIZES)
+            const picked = SIZES.find(one => one === label)
+            if (picked === undefined) return
+            const known = await read($, history)
+            await update($, turn, value =>
+              value.id === turnId
+                ? { ...value, expected: expectedFor(picked, 'model', known) }
+                : value,
+            )
+          })().catch(() => undefined)
+        })
+      }
+    } catch (error) {
+      say($, 'turn.start', error)
+    }
+
+    return next(e)
+  })
+
+  // Passes every request through untouched, then counts what it cost.
+  on('turn.step', async function* ($, e, next) {
+    const result = yield* next(e)
+    try {
+      const cost = result.usage
+      if (cost !== null) {
+        const work = cost.input_tokens + cost.cache_creation_input_tokens + cost.output_tokens
+        const now = await update($, turn, value =>
+          value.isWorking
+            ? {
+                ...value,
+                tokens: value.tokens + work,
+                outTokens: value.outTokens + cost.output_tokens,
+                cacheRead: value.cacheRead + cost.cache_read_input_tokens,
+                steps: value.steps + 1,
+              }
+            : value,
+        )
+        await update($, usage, value => ({ ...value, sessionTokens: value.sessionTokens + work }))
+        const { agentId } = e
+        if (agentId !== undefined) {
+          await update($, agents, list =>
+            list.map(run =>
+              run.agentId === agentId ? { ...run, tokens: run.tokens + work } : run,
+            ),
+          )
+        }
+        if (
+          now.isWorking &&
+          !now.hasWarned &&
+          now.expected !== null &&
+          now.tokens > now.expected.tokens.high * 1.5
+        ) {
+          await update($, turn, value => ({ ...value, hasWarned: true }))
+          $.ui.toast('This prompt is running well past its expected token range')
+        }
+      }
+    } catch (error) {
+      say($, 'turn.step', error)
+    }
+
+    return result
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    try {
+      const now = await $.clock.now()
+      const { agentId } = e
+      if (agentId === undefined) {
+        const ended = await update($, turn, value => ({ ...value, isWorking: false, endedAt: now }))
+        if (ended.expected !== null && ended.tokens > 0 && e.reason === 'answer') {
+          const record = {
+            size: ended.expected.size,
+            tokens: ended.tokens,
+            ms: e.durationMs,
+            tools: ended.tools,
+            agents: ended.agents,
+            at: now,
+          }
+          const past = await update($, history, list => [...list, record].slice(-300))
+          const saved = await update($, project, value =>
+            value === null
+              ? value
+              : {
+                  ...value,
+                  turns: value.turns + 1,
+                  tokens: value.tokens + ended.tokens,
+                  lastActive: now,
+                },
+          )
+          if (saved !== null) {
+            await $.store.set(`history:${saved.root}`, past)
+            await saveProject($)
+          }
+        }
+      } else {
+        const status: AgentRunStatus = e.reason === 'answer' ? 'done' : 'failed'
+        const runs = await read($, agents)
+        const run = runs.find(one => one.agentId === agentId)
+        await update($, agents, list =>
+          list.map(one => (one.agentId === agentId ? { ...one, status, endedAt: now } : one)),
+        )
+        if (run !== undefined) {
+          await note($, 'agent', `Agent ${status === 'done' ? 'finished' : 'failed'}: ${run.label}`)
+          if (status === 'failed') $.ui.toast(`Agent failed: ${clip(run.label, 60)}`)
+        }
+      }
+      await refresh($, shouldAutoOpen)
+    } catch (error) {
+      say($, 'turn.complete', error)
+    }
+
+    return next(e)
+  })
+
+  on('agent.spawn', async ($, e, next) => {
+    let key = ''
+    let startedAt = 0
+    try {
+      startedAt = await $.clock.now()
+      key = `${e.tool_use_id}:${startedAt}`
+      const label = e.description === '' ? e.subagentType : e.description
+      const taskId = matchTask(`${e.name ?? ''} ${label}`, await read($, tasks))
+      const run: AgentRun = {
+        key,
+        label,
+        type: e.subagentType,
+        status: 'starting',
+        tools: 0,
+        families: {},
+        tokens: 0,
+        startedAt,
+        ...(e.name === undefined ? {} : { name: e.name }),
+        ...(e.model === undefined ? {} : { model: e.model }),
+        ...(e.parentAgentId === undefined ? {} : { parentAgentId: e.parentAgentId }),
+        ...(taskId === undefined ? {} : { taskId }),
+      }
+      await update($, agents, list => [...list, run].slice(-60))
+      await update($, turn, value =>
+        value.isWorking ? { ...value, agents: value.agents + 1 } : value,
+      )
+      await note($, 'agent', `Agent started: ${label}`)
+      await refresh($, shouldAutoOpen)
+    } catch (error) {
+      say($, 'agent.spawn', error)
+    }
+
+    const started = await next(e)
+    try {
+      await update($, agents, list =>
+        list.map(one => {
+          if (one.key !== key) return one
+          if (started.deny !== undefined) {
+            return { ...one, status: 'failed' as const, endedAt: startedAt }
+          }
+
+          return {
+            ...one,
+            status: one.status === 'starting' ? ('running' as const) : one.status,
+            model: started.model,
+            ...(started.agentId === undefined ? {} : { agentId: started.agentId }),
+          }
+        }),
+      )
+      await refresh($, false)
+    } catch (error) {
+      say($, 'agent.spawn', error)
+    }
+
+    return started
+  })
+
+  // Every tool call: an agent's heartbeat and equipment, the files edited,
+  // and whatever the call left running in the background.
+  on('tool.call', async ($, e, next) => {
+    const tool = String(e.tool)
+    // The dashboard's own bookkeeping tool is no part of anyone's equipment.
+    if (tool === PROJECT_TOOL) return next(e)
+    try {
+      const family = familyOf(tool)
+      const { agentId } = e
+      if (agentId === undefined) {
+        await update($, usage, value => ({
+          ...value,
+          mainFamilies: bumpFamily(value.mainFamilies, family),
+        }))
+      } else {
+        await update($, agents, list =>
+          list.map(run =>
+            run.agentId === agentId
+              ? {
+                  ...run,
+                  tools: run.tools + 1,
+                  families: bumpFamily(run.families, family),
+                  lastTool: tool,
+                }
+              : run,
+          ),
+        )
+      }
+      await update($, turn, value =>
+        value.isWorking ? { ...value, tools: value.tools + 1 } : value,
+      )
+      if (family === 'edit') {
+        const path = pick(e, 'file_path') ?? pick(e, 'notebook_path')
+        if (path !== undefined) await update($, files, list => hitFile(list, path))
+      }
+    } catch (error) {
+      say($, 'tool.call', error)
+    }
+
+    const ran = await next(e)
+    try {
+      if (ran.deny === undefined && ran.isError !== true && BACKGROUND.has(tool)) {
+        const at = await $.clock.now()
+        const { result } = ran
+        const started = (id: string, kind: Proc['kind'], label: string): Proc => ({
+          id,
+          kind,
+          label: clip(label, 80),
+          status: 'running',
+          startedAt: at,
+        })
+        const shell = pick(result, 'backgroundTaskId')
+        const taskId = pick(result, 'taskId')
+        let proc: Proc | undefined
+        if (shell !== undefined) {
+          proc = started(shell, 'shell', pick(e, 'description') ?? pick(e, 'command') ?? tool)
+        } else if (tool === 'Monitor' && taskId !== undefined) {
+          proc = started(taskId, 'monitor', pick(e, 'description') ?? 'monitor')
+        } else if (tool === 'Workflow' && taskId !== undefined) {
+          proc = started(taskId, 'workflow', pick(result, 'workflowName') ?? 'workflow')
+        } else if (tool === 'CronCreate') {
+          const id = pick(result, 'id')
+          if (id !== undefined) {
+            proc = started(
+              id,
+              'cron',
+              `${pick(result, 'humanSchedule') ?? ''} · ${pick(e, 'prompt') ?? ''}`,
+            )
+          }
+        }
+        if (proc !== undefined) {
+          const added = proc
+          await update($, procs, list => upsertProc(list, added))
+          await note($, 'process', `Started ${added.kind}: ${added.label}`)
+        }
+        const stopped =
+          tool === 'TaskStop' ? pick(result, 'task_id') : tool === 'CronDelete' ? pick(result, 'id') : undefined
+        if (stopped !== undefined) {
+          await update($, procs, list => endProc(list, stopped, 'stopped', at))
+        }
+      }
+    } catch (error) {
+      say($, 'tool.call', error)
+    }
+
+    return ran
+  })
+
+  on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      if (ran.deny === undefined && ran.isError !== true) {
+        const { agentId } = e
+        const owner = (await read($, agents)).find(run => run.agentId === agentId)
+        const before = taskStats(await read($, tasks)).done
+        const after = await update($, tasks, list =>
+          mergeTodos(list, e.todos, agentId, agentId === undefined ? undefined : owner?.taskId),
+        )
+        await countDone($, taskStats(after).done - before)
+        await refresh($, shouldAutoOpen)
+      }
+    } catch (error) {
+      say($, 'TodoWrite', error)
+    }
+
+    return ran
+  })
+
+  on('tool.call', { tool: 'TaskCreate' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      if (ran.deny === undefined && ran.isError !== true) {
+        const { agentId } = e
+        const owner = (await read($, agents)).find(run => run.agentId === agentId)
+        const parentId = agentId === undefined ? undefined : owner?.taskId
+        const draft = {
+          id: ran.result.task.id,
+          subject: e.subject,
+          metadata: e.metadata,
+          ...(e.activeForm === undefined ? {} : { activeForm: e.activeForm }),
+          ...(agentId === undefined ? {} : { agentId }),
+          ...(parentId === undefined ? {} : { parentId }),
+        }
+        await update($, tasks, list => createTask(list, draft))
+        await refresh($, shouldAutoOpen)
+      }
+    } catch (error) {
+      say($, 'TaskCreate', error)
+    }
+
+    return ran
+  })
+
+  on('tool.call', { tool: 'TaskUpdate' }, async ($, e, next) => {
+    const ran = await next(e)
+    try {
+      if (ran.deny === undefined && ran.isError !== true && ran.result.success) {
+        const { agentId, taskId, status, owner } = e
+        const before = (await read($, tasks)).find(task => task.id === taskId)
+        await update($, tasks, list => patchTask(list, e))
+        if (status === 'completed' && before !== undefined && before.status !== 'completed') {
+          await note($, 'task', `Task done: ${before.subject}`)
+          await countDone($, 1)
+        }
+        // Whoever takes a task up stands at its building.
+        if (status === 'in_progress' || owner !== undefined) {
+          await update($, agents, list =>
+            list.map(run =>
+              isLive(run) &&
+              ((agentId !== undefined && run.agentId === agentId && status === 'in_progress') ||
+                (owner !== undefined && run.name === owner))
+                ? { ...run, taskId }
+                : run,
+            ),
+          )
+        }
+        await refresh($, shouldAutoOpen)
+      }
+    } catch (error) {
+      say($, 'TaskUpdate', error)
+    }
+
+    return ran
+  })
+
+  on('skill.prompt', async ($, e, next) => {
+    try {
+      const { skill } = e
+      await update($, skills, value => ({
+        ...value,
+        used: { ...value.used, [skill]: (value.used[skill] ?? 0) + 1 },
+        suggested: value.suggested.filter(name => name !== skill),
+      }))
+      await note($, 'skill', `Skill used: ${skill}`)
+    } catch (error) {
+      say($, 'skill.prompt', error)
+    }
+
+    return next(e)
+  })
+
+  on('session.measure', async ($, e, next) => {
+    try {
+      const before = await read($, usage)
+      const percent = e.context.percent ?? before.contextPercent
+      await update($, usage, value => ({
+        ...value,
+        contextTokens: e.context.tokens ?? value.contextTokens,
+        contextWindow: e.context.window,
+        contextPercent: percent,
+        rateLimits: e.rateLimits.map(limit => ({
+          kind: limit.kind,
+          percentUsed: limit.percentUsed,
+          ...(limit.resetsAt === undefined ? {} : { resetsAt: limit.resetsAt }),
+        })),
+        costUsd: e.cost?.usd ?? value.costUsd,
+        hasWarnedContext: percent >= 80,
+      }))
+      if (percent >= 80 && !before.hasWarnedContext) {
+        $.ui.toast(`The context window is ${percent}% full`)
+      }
+    } catch (error) {
+      say($, 'session.measure', error)
+    }
+
+    return next(e)
+  })
+
+  // At each stop the engine says what is still in flight: the truth to hold to.
+  on('classic.Stop', async ($, e, next) => {
+    try {
+      const at = await $.clock.now()
+      // A stop that names no background list says nothing about what runs.
+      const background = e.background_tasks
+      const crons = e.session_crons ?? []
+      if (background !== undefined) {
+        await update($, procs, list => reconcileProcs(list, background, crons, at))
+      }
+      // An agent whose end was missed is settled by what the engine lists.
+      const listed = await $.agent.list()
+      await update($, agents, list =>
+        list.map(run => {
+          const info = listed.find(one => one.id === run.agentId)
+          if (!isLive(run) || info === undefined) return run
+          if (info.status === 'completed') return { ...run, status: 'done' as const, endedAt: at }
+          if (info.status === 'failed' || info.status === 'killed') {
+            return { ...run, status: 'failed' as const, endedAt: at }
+          }
+
+          return run
+        }),
+      )
+    } catch (error) {
+      say($, 'classic.Stop', error)
+    }
+
+    return next(e)
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    isBandAsked = true
+    measure(`${e.surface}:band`, {
+      bodyColumns: e.props.bodyColumns,
+      maxRows: e.props.maxRows,
+      viewport: e.viewport ?? null,
+    })
+    const state = await read($, ui)
+    if (e.props.hasSurvey || state.isBandHidden) return next(e)
+
+    return band($.ui.resolve(e), await load($, e.props.bodyColumns), actionsOf($))
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    measure(`${e.surface}:pane`, {
+      bodyColumns: e.props.bodyColumns,
+      bodyRows: e.props.scroll.bodyRows,
+      placement: e.props.placement,
+      viewport: e.viewport ?? null,
+    })
+    const model = await load($, e.props.bodyColumns)
+    // The terminal draws no vector graphics: it gets the city and icons as text.
+    const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
+
+    return pane($.ui.resolve(e), model, actionsOf($), Svg, e.surface !== 'mobile')
+  })
+}

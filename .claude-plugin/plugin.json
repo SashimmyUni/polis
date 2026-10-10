@@ -1,0 +1,28 @@
+{
+  "name": "polis",
+  "version": "0.1.0",
+  "description": "A project dashboard and isometric city map: progress, tasks, agents, resources, processes and skills",
+  "author": { "name": "Jimmy Huynh" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "estimate": {
+      "type": "string",
+      "title": "Expected resources",
+      "description": "How a prompt's expected cost is sized: both (history, plus a small-model estimate for long prompts), history (free), or model (a small-model call on every prompt)",
+      "options": ["both", "history", "model"],
+      "default": "both"
+    },
+    "guidance": {
+      "type": "boolean",
+      "title": "Guide Claude",
+      "description": "Add a short standing instruction so Claude keeps tasks and project milestones current, and offer it the project tool",
+      "default": true
+    },
+    "autoOpen": {
+      "type": "boolean",
+      "title": "Open the dashboard by itself",
+      "description": "Open the Polis pane the first time tasks or agents appear in a session",
+      "default": true
+    }
+  }
+}
