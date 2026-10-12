@@ -577,6 +577,26 @@ export const projectName = (root: string): string => {
   return parts[parts.length - 1] ?? 'Project'
 }
 
+// A path under the root, joined the way the root itself is written.
+export const under = (root: string, ...parts: string[]): string => {
+  const separator = root.includes('\\') && !root.includes('/') ? '\\' : '/'
+
+  return [root.replace(/[\\/]+$/, ''), ...parts].join(separator)
+}
+
+// An absolute path as the address a browser opens: `C:\a\b` and `/a/b` alike.
+export const fileUrl = (path: string): string => {
+  const parts = path.split(/[\\/]+/).filter(part => part !== '')
+  const hasDrive = /^[A-Za-z]:$/.test(parts[0] ?? '')
+  const encoded = parts.map((part, index) =>
+    index === 0 && hasDrive ? part : encodeURIComponent(part),
+  )
+  // A network share (`\\server\share`) names its server where a host goes.
+  const isShare = /^(\\\\|\/\/)[^\\/]/.test(path)
+
+  return `${isShare ? 'file://' : 'file:///'}${encoded.join('/')}`
+}
+
 export const newProject = (root: string, at: number): Project => ({
   root,
   name: projectName(root),

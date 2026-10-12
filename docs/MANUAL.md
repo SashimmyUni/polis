@@ -80,7 +80,7 @@ The band wraps onto more lines when it is narrow. If Claude Code is showing a su
 
 ### Opening the pane
 
-Type `/city` to open the pane. With no argument it opens at the City view. Give it a view name to open there (case does not matter): `/city overview`, `/city city`, `/city tasks`, `/city agents`, `/city resources` or `/city skills`. Any other word opens the pane at the view it last showed (Overview in a new session). You can also press **City** in the band, and `/orchestrate` opens the pane too.
+Type `/city` to open the pane. With no argument it opens at the City view. Give it a view name to open there (case does not matter): `/city overview`, `/city city`, `/city tasks`, `/city agents`, `/city resources` or `/city skills`. `/city page` is different: it replies with the path and `file:///` URL of the page on disk (see "A self-refreshing page on disk"). Any other word opens the pane at the view it last showed (Overview in a new session). You can also press **City** in the band, and `/orchestrate` opens the pane too.
 
 ![A new session's city](images/city-new.svg)
 
@@ -102,6 +102,20 @@ The pane shows `◆ POLIS`, the project's name and phase, and one tab per view. 
 **How wide it is.** Polis asks the host for 68 columns and 46 rows, enough for the city at a readable size while the conversation keeps about half the window. These are requests: Claude Code uses the columns when the pane docks beside the conversation and the rows when it sits above the prompt, and a size you have dragged or keyed it to wins. In a terminal, the pane docks when Claude Code is fullscreen and the window is at least 110 columns wide; otherwise it sits above the prompt.
 
 Polis lays the pane out for the width it is actually given. Under 44 columns it switches to a narrow layout: the city is drawn one block wide, bars sit under their labels, long text wraps instead of being cut, and the list of available skills drops its descriptions (suggested skills keep theirs). (In the desktop app, a pane docked beside other panes can be about 20 columns wide.)
+
+### A self-refreshing page on disk
+
+While a session runs, Polis also writes the current city into an HTML file, and the page reloads itself every 3 seconds. Open it once in any browser, or in a VS Code tab with a preview extension, and leave it beside your editor. No server is needed.
+
+| | |
+| --- | --- |
+| The file | `<project root>/.polis/city.html`. The project root is the git repository root, or the session's working directory outside a repository. |
+| Beside it | `.polis/.gitignore` containing `*`, so the folder never shows in `git status`. |
+| What it shows | The city only, with the project's name and a one-line description above it. The Tasks, Agents and Resources views are not on the page. |
+| When it is written | Each time the board changes the picture. An idle session writes nothing. |
+| After the session | The file stays, as the last picture. |
+
+`/city page` replies with the file's path and its `file:///` URL. To turn the writing off, set `page` to `false` (see "Options").
 
 ### How work gets onto the board
 
@@ -143,8 +157,9 @@ The **Orchestrate** button in the Overview replaces the prompt's text with `/orc
 | `estimate` | `both` | How a prompt's expected cost is sized. `history`: a text heuristic picks the size (small to very large) and the range comes from this project's past turns of that size (starting defaults until it has five); no model call. `model`: a small-model call sizes every prompt, and the heuristic's guess shows until it answers. `both`: the heuristic, plus the model for prompts of 400 or more characters, four or more lines, or sized large or very large by the heuristic. Any other value counts as `both`. The model is never asked where nothing draws. |
 | `guidance` | on | The standing instruction and the `mcp__polis__project` tool, as above. On unless set to `false`. |
 | `autoOpen` | on | Open the pane the first time tasks or agents appear in a session. On unless set to `false`. |
+| `page` | on | Write the city to `.polis/city.html` in the project each time the board changes (see "A self-refreshing page on disk"). Set it to `false` to turn the writing off. |
 
-Set them in `/config`, where each option is a row and a change reloads Polis with the new value (the plugin manifest titles them Expected resources, Guide Claude and Open the dashboard by itself), or in settings under `pluginConfigs.polis.options`:
+Set them in `/config`, where each option is a row and a change reloads Polis with the new value (the plugin manifest titles them Expected resources, Guide Claude, Open the dashboard by itself and Page on disk), or in settings under `pluginConfigs.polis.options`:
 
 ```json
 {

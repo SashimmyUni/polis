@@ -1,6 +1,6 @@
 {
   "name": "polis",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A project dashboard and isometric city map: progress, tasks, agents, resources, processes and skills",
   "author": { "name": "Jimmy Huynh" },
   "types": "./types/index.d.ts",
@@ -22,6 +22,12 @@
       "type": "boolean",
       "title": "Open the dashboard by itself",
       "description": "Open the Polis pane the first time tasks or agents appear in a session",
+      "default": true
+    },
+    "page": {
+      "type": "boolean",
+      "title": "Page on disk",
+      "description": "Write the city to .polis/city.html in the project each time the board changes, for a browser or preview tab left open",
       "default": true
     }
   }
