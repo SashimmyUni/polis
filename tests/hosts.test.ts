@@ -129,13 +129,13 @@ test('where nothing draws, the system prompt is left alone', async ($, on) => {
   expect(composed.sections.map(section => section.id)).toEqual(['intro'])
 })
 
-test('the caption under the city promises hover only where there is a pointer', async ($, on) => {
+test('the city stands alone in its view, with no caption under it', async ($, on) => {
   world(on, { surfaces: ['desktop', 'mobile'], isPlaced: true })
-  for (const [surface, hasHover] of [['desktop', true], ['vscode', true], ['mobile', false]] as const) {
+  for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...MOUNT, surface })
     await ui.press({ key: 'view-city' })
-    const caption = await ui.find({ type: 'Text', text: /Buildings are tasks/ })
-    expect(caption?.text.includes('Hover')).toBe(hasHover)
+    expect(await ui.find({ type: 'Svg' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Buildings are tasks/ })).toBeUndefined()
     await ui.unmount()
   }
 })
@@ -151,11 +151,11 @@ test('a narrow pane gets the city one block wide and stacks its bars under their
   for (const surface of ['desktop', 'vscode', 'mobile'] as const) {
     const narrow = await $.ui.mount({ ...NARROW, surface })
     await narrow.press({ key: 'view-city' })
-    expect(String((await narrow.find({ type: 'Svg' }))?.props.source)).toContain('viewBox="-73 ')
+    expect(String((await narrow.find({ type: 'Svg' }))?.props.source)).toContain('>main session ')
     await narrow.unmount()
 
     const wide = await $.ui.mount({ ...MOUNT, surface })
-    expect(String((await wide.find({ type: 'Svg' }))?.props.source)).toContain('viewBox="-158 ')
+    expect(String((await wide.find({ type: 'Svg' }))?.props.source)).toContain('>session ')
     await wide.unmount()
   }
 

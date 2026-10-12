@@ -4,18 +4,23 @@ import type {
   Expected,
   FamilyCounts,
   FileHit,
+  LimitSample,
+  LimitTrack,
   Milestone,
   MilestoneStatus,
   Proc,
   ProcKind,
   Project,
   Range,
+  RateLimit,
   Size,
   SkillInfo,
   Task,
   TaskStatus,
   ToolFamily,
   TurnRecord,
+  Wait,
+  WaitKind,
 } from '../types'
 
 // ---------------------------------------------------------------- formatting
@@ -27,6 +32,18 @@ export const elapsed = (ms: number): string => {
   if (minutes < 60) return `${minutes}m${String(seconds % 60).padStart(2, '0')}s`
 
   return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')}m`
+}
+
+// A stretch of time to the minute, for a forecast: seconds would claim more
+// than a forecast knows.
+export const about = (ms: number): string => {
+  const minutes = Math.max(0, Math.round(ms / 60_000))
+  if (minutes < 1) return 'under 1m'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h${String(minutes % 60).padStart(2, '0')}m`
+
+  return `${Math.floor(hours / 24)}d${hours % 24}h`
 }
 
 export const compact = (n: number): string => {
@@ -109,18 +126,33 @@ export const mergeTodos = (
   parentId: string | undefined,
 ): Task[] => {
   const loop = agentId ?? 'main'
-  const kept = list.filter(task => !(task.source === 'todo' && (task.agentId ?? 'main') === loop))
-  const fresh = todos.map((todo, index): Task => ({
-    id: `todo:${loop}:${index}`,
-    subject: todo.content,
-    status: todo.status,
-    area: inferArea(todo.content),
-    blockedBy: [],
-    source: 'todo',
-    ...(todo.activeForm === undefined ? {} : { activeForm: todo.activeForm }),
-    ...(agentId === undefined ? {} : { agentId }),
-    ...(parentId === undefined ? {} : { parentId }),
-  }))
+  // An earlier session's todos are that session's: this loop's list leaves them be.
+  const isOwn = (task: Task): boolean =>
+    task.source === 'todo' && task.sessionId === undefined && (task.agentId ?? 'main') === loop
+  const kept = list.filter(task => !isOwn(task))
+  const fresh = todos.map((todo, index): Task => {
+    // A todo written again is the same work: what was learnt of it stays.
+    const was = list.find(task => isOwn(task) && task.subject === todo.content)
+
+    return {
+      id: `todo:${loop}:${index}`,
+      subject: todo.content,
+      status: todo.status,
+      area: was?.area ?? inferArea(todo.content),
+      areaFrom: was?.areaFrom ?? 'title',
+      blockedBy: [],
+      source: 'todo',
+      ...(was?.touched === undefined ? {} : { touched: was.touched }),
+      // Reopened work is no longer what was checked.
+      ...(was?.verdict === undefined || (was.status === 'completed' && todo.status !== 'completed')
+        ? {}
+        : { verdict: was.verdict }),
+      ...(was?.doneAt === undefined ? {} : { doneAt: was.doneAt }),
+      ...(todo.activeForm === undefined ? {} : { activeForm: todo.activeForm }),
+      ...(agentId === undefined ? {} : { agentId }),
+      ...(parentId === undefined ? {} : { parentId }),
+    }
+  })
 
   return [...kept, ...fresh].slice(-240)
 }
@@ -137,15 +169,14 @@ export type TaskDraft = {
 export const createTask = (list: readonly Task[], draft: TaskDraft): Task[] => {
   const parentId = field(draft.metadata, 'parent') ?? draft.parentId
   const parent = list.find(task => task.id === parentId)
+  const isTagged = field(draft.metadata, 'area') !== undefined
   const task: Task = {
     id: draft.id,
     subject: draft.subject,
     status: 'pending',
     // A sub-task with no area of its own lives in its parent's district.
-    area:
-      field(draft.metadata, 'area') === undefined && parent !== undefined
-        ? parent.area
-        : areaOf(draft.metadata, draft.subject),
+    area: !isTagged && parent !== undefined ? parent.area : areaOf(draft.metadata, draft.subject),
+    areaFrom: isTagged ? 'tag' : (parent?.areaFrom ?? 'title'),
     blockedBy: [],
     source: 'task',
     ...(draft.activeForm === undefined ? {} : { activeForm: draft.activeForm }),
@@ -193,7 +224,7 @@ export const patchTask = (list: readonly Task[], patch: TaskPatch): Task[] => {
       ...(patch.activeForm === undefined ? {} : { activeForm: patch.activeForm }),
       ...(status === undefined ? {} : { status }),
       ...(patch.owner === undefined ? {} : { owner: patch.owner }),
-      ...(area === undefined ? {} : { area: area.toLowerCase().slice(0, 24) }),
+      ...(area === undefined ? {} : { area: area.toLowerCase().slice(0, 24), areaFrom: 'tag' as const }),
       ...(parentId === undefined ? {} : { parentId }),
       blockedBy: union(task.blockedBy, patch.addBlockedBy ?? []),
     }
@@ -543,6 +574,307 @@ export const sizeStats = (history: readonly TurnRecord[]): SizeStat[] =>
     }
   })
 
+// -------------------------------------------------------------------- limits
+
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+
+// How far back a window's pace is read, and the shortest stretch of readings
+// a pace is told from. A five-hour window is judged by its last half hour; a
+// longer one by its last day, so that a night's rest counts toward its pace.
+const PACE: { [kind: string]: { lookback: number; least: number } } = {
+  five_hour: { lookback: 30 * MINUTE, least: 10 * MINUTE },
+  seven_day: { lookback: 24 * HOUR, least: 2 * HOUR },
+  spend_limit: { lookback: 24 * HOUR, least: 2 * HOUR },
+}
+
+const USUAL_PACE = { lookback: HOUR, least: 10 * MINUTE }
+
+const paceOf = (kind: string): { lookback: number; least: number } => PACE[kind] ?? USUAL_PACE
+
+const stamp = (iso: string | undefined): number | null => {
+  const at = iso === undefined ? NaN : Date.parse(iso)
+
+  return Number.isFinite(at) ? at : null
+}
+
+// Whether a reading belongs to another window than the one held: its reset
+// time moved, the held window's reset has passed, or, where no reset time
+// says, the figure fell.
+const isNewWindow = (track: LimitTrack, limit: RateLimit, at: number): boolean => {
+  const was = stamp(track.resetsAt)
+  const is = stamp(limit.resetsAt)
+  if (was !== null && is !== null) return Math.abs(is - was) > MINUTE
+  const last = track.samples[track.samples.length - 1]
+
+  return (was !== null && at >= was) || (last !== undefined && limit.percentUsed < last.percent)
+}
+
+// The readings a pace can still be told from: those inside the lookback, and
+// the newest one before it, which says where the window stood as it began.
+const trimSamples = (samples: readonly LimitSample[], since: number): LimitSample[] => {
+  const older = samples.filter(sample => sample.at <= since)
+
+  return [...older.slice(-1), ...samples.filter(sample => sample.at > since)].slice(-120)
+}
+
+// One more reading of a limit window. A level is kept from the first time it
+// was read; a reading of a new window starts over, its warning not yet given.
+export const recordLimit = (
+  track: LimitTrack | undefined,
+  limit: RateLimit,
+  at: number,
+): LimitTrack => {
+  const reading = { at, percent: limit.percentUsed }
+  const reset = limit.resetsAt === undefined ? {} : { resetsAt: limit.resetsAt }
+  if (track === undefined || isNewWindow(track, limit, at)) {
+    return { kind: limit.kind, samples: [reading], hasWarned: false, ...reset }
+  }
+  const last = track.samples[track.samples.length - 1]
+  const samples =
+    last !== undefined && last.percent === reading.percent ? track.samples : [...track.samples, reading]
+
+  return { ...track, ...reset, samples: trimSamples(samples, at - paceOf(limit.kind).lookback) }
+}
+
+// What the store handed back, held to the shape of the tracks.
+export const asTracks = (saved: unknown): LimitTrack[] => {
+  if (!Array.isArray(saved)) return []
+  const tracks: LimitTrack[] = []
+  for (const raw of saved.slice(0, 8)) {
+    const kind = field(raw, 'kind')
+    const samples = (raw as { samples?: unknown } | null)?.samples
+    if (kind === undefined || !Array.isArray(samples)) continue
+    const resetsAt = field(raw, 'resetsAt')
+    tracks.push({
+      kind,
+      samples: samples
+        .filter(
+          (one): one is LimitSample =>
+            typeof one === 'object' &&
+            one !== null &&
+            Number.isFinite((one as LimitSample).at) &&
+            Number.isFinite((one as LimitSample).percent),
+        )
+        .map(one => ({ at: one.at, percent: one.percent }))
+        .slice(-120),
+      hasWarned: (raw as { hasWarned?: unknown }).hasWarned === true,
+      ...(resetsAt === undefined ? {} : { resetsAt }),
+    })
+  }
+
+  return tracks
+}
+
+const newest = (track: LimitTrack): number => track.samples[track.samples.length - 1]?.at ?? 0
+
+// A window as two sessions read it, folded into one: their readings in
+// order, and a warning either of them gave counting for both. Of two
+// different windows of a kind the one read last stands.
+export const mergeTracks = (
+  held: readonly LimitTrack[],
+  kept: readonly LimitTrack[],
+): LimitTrack[] => {
+  const kinds = [...new Set([...held, ...kept].map(track => track.kind))]
+  const merged: LimitTrack[] = []
+  for (const kind of kinds) {
+    const mine = held.find(track => track.kind === kind)
+    const theirs = kept.find(track => track.kind === kind)
+    if (mine === undefined || theirs === undefined) {
+      const only = mine ?? theirs
+      if (only !== undefined) merged.push(only)
+      continue
+    }
+    const was = stamp(mine.resetsAt)
+    const is = stamp(theirs.resetsAt)
+    if (was === null || is === null || Math.abs(was - is) > MINUTE) {
+      merged.push(newest(theirs) > newest(mine) ? theirs : mine)
+      continue
+    }
+    const samples: LimitSample[] = []
+    for (const sample of [...mine.samples, ...theirs.samples].sort((a, b) => a.at - b.at)) {
+      if (samples[samples.length - 1]?.percent !== sample.percent) samples.push(sample)
+    }
+    merged.push({ ...mine, samples: samples.slice(-120), hasWarned: mine.hasWarned || theirs.hasWarned })
+  }
+
+  return merged
+}
+
+// `learning`: too few readings to tell a pace. `steady`: no rise lately.
+// `lasting`: on course to reach the reset. `short`: on course to run out
+// before it. `spent`: full already. `open`: a pace, but no reset time to
+// hold it against.
+export type LimitOutlook = 'learning' | 'steady' | 'lasting' | 'short' | 'spent' | 'open'
+
+export type LimitForecast = {
+  kind: string
+  percentUsed: number
+  /** When the window resets, where the engine says. */
+  resetsAt: number | null
+  /** Points of the window used an hour over the lookback, once it can be told. */
+  perHour: number | null
+  /** When the window would be full at that pace. */
+  exhaustsAt: number | null
+  outlook: LimitOutlook
+}
+
+// When a limit window runs out at its recent pace, against when it resets.
+// The pace is what the window gained over the lookback that ends now, so a
+// pause slows it and a long one ends the forecast.
+export const forecastLimit = (
+  limit: RateLimit,
+  track: LimitTrack | undefined,
+  now: number,
+): LimitForecast => {
+  const resetsAt = stamp(limit.resetsAt)
+  const unknown = {
+    kind: limit.kind,
+    percentUsed: limit.percentUsed,
+    resetsAt,
+    perHour: null,
+    exhaustsAt: null,
+  }
+  if (limit.percentUsed >= 100) return { ...unknown, outlook: 'spent' }
+  // Readings of a window that has reset since say nothing of the new one.
+  if (resetsAt !== null && resetsAt <= now) return { ...unknown, outlook: 'learning' }
+  const { lookback, least } = paceOf(limit.kind)
+  const samples = (track?.samples ?? []).filter(sample => sample.at <= now)
+  const since = now - lookback
+  const before = samples.filter(sample => sample.at <= since).slice(-1)[0]
+  const from = before === undefined ? samples[0] : { at: since, percent: before.percent }
+  if (from === undefined || now - from.at < least) return { ...unknown, outlook: 'learning' }
+  const gained = limit.percentUsed - from.percent
+  if (gained <= 0) return { ...unknown, outlook: 'steady' }
+  const span = now - from.at
+  const perHour = (gained * HOUR) / span
+  const exhaustsAt = Math.round(now + ((100 - limit.percentUsed) * span) / gained)
+
+  return {
+    ...unknown,
+    perHour,
+    exhaustsAt,
+    outlook: resetsAt === null ? 'open' : exhaustsAt < resetsAt ? 'short' : 'lasting',
+  }
+}
+
+export const forecastsOf = (
+  limits: readonly RateLimit[],
+  tracks: readonly LimitTrack[],
+  now: number,
+): LimitForecast[] =>
+  limits.map(limit => forecastLimit(limit, tracks.find(track => track.kind === limit.kind), now))
+
+const LIMIT_NAME: { [kind: string]: readonly [string, string] } = {
+  five_hour: ['5h', 'five-hour'],
+  seven_day: ['7d', 'seven-day'],
+  spend_limit: ['spend', 'spend'],
+}
+
+// A window's name, short for the band and whole for a sentence.
+export const limitName = (kind: string, isShort = false): string =>
+  LIMIT_NAME[kind]?.[isShort ? 0 : 1] ?? clip(kind.replace(/_/g, ' '), isShort ? 8 : 24)
+
+const rate = (perHour: number | null): string => `${Math.round((perHour ?? 0) * 10) / 10}%/h`
+
+// A forecast in a line, for the Resources view.
+export const forecastText = (forecast: LimitForecast, now: number): string => {
+  const { outlook, resetsAt } = forecast
+  const full = about((forecast.exhaustsAt ?? now) - now)
+  if (outlook === 'spent') {
+    return resetsAt === null || resetsAt <= now
+      ? 'limit reached'
+      : `limit reached · resets in ${about(resetsAt - now)}`
+  }
+  if (outlook === 'learning') return 'pace not known yet: it takes a few readings'
+  if (outlook === 'steady') return 'no rise lately: not on course to run out'
+  if (outlook === 'open') return `full in about ${full} at ${rate(forecast.perHour)} · no reset time reported`
+  if (outlook === 'lasting') return `at ${rate(forecast.perHour)} it lasts until the reset`
+  const early = about((resetsAt ?? now) - (forecast.exhaustsAt ?? now))
+
+  return `full in about ${full} at ${rate(forecast.perHour)}, ${early} before it resets`
+}
+
+// The window most worth a warning, in a few words for the band: one already
+// full, else the one on course to run out soonest before its reset.
+export const limitAlert = (forecasts: readonly LimitForecast[], now: number): string | undefined => {
+  const spent = forecasts.find(one => one.outlook === 'spent')
+  if (spent !== undefined) return `⚠ ${limitName(spent.kind, true)} limit reached`
+  const short = forecasts
+    .filter(one => one.outlook === 'short')
+    .sort((a, b) => (a.exhaustsAt ?? 0) - (b.exhaustsAt ?? 0))[0]
+
+  return short === undefined
+    ? undefined
+    : `⚠ ${limitName(short.kind, true)} limit out in ${about((short.exhaustsAt ?? now) - now)}`
+}
+
+// The one toast a window on course to run out early gets.
+export const limitToast = (forecast: LimitForecast, now: number): string => {
+  const full = about((forecast.exhaustsAt ?? now) - now)
+  const early = about((forecast.resetsAt ?? now) - (forecast.exhaustsAt ?? now))
+
+  return `The ${limitName(forecast.kind)} limit is on course to run out in about ${full}, ${early} before it resets`
+}
+
+// --------------------------------------------------------------------- waits
+
+// The tools whose call is itself a wait on the person, whatever the mode.
+export const ASKING: { [tool: string]: WaitKind } = {
+  AskUserQuestion: 'question',
+  ExitPlanMode: 'plan',
+}
+
+// One wait for each thing waited on: the same loop asking again for the same
+// tool takes the place of its earlier request.
+export const addWait = (list: readonly Wait[], wait: Wait): Wait[] =>
+  [
+    ...list.filter(
+      one => !(one.kind === wait.kind && one.tool === wait.tool && one.agentId === wait.agentId),
+    ),
+    wait,
+  ].slice(-12)
+
+// A wait that holds work up, where the end of a turn only hands it back.
+export const isBlocking = (wait: Wait): boolean => wait.kind !== 'turn'
+
+// What the person is needed for first: the oldest thing holding work up,
+// else the turn handed back to them.
+export const topWait = (list: readonly Wait[]): Wait | undefined =>
+  list.find(isBlocking) ?? list.find(wait => wait.kind === 'turn')
+
+export const waitText = (wait: Wait): string => {
+  if (wait.kind === 'permission') return `permission for ${clip(wait.tool ?? 'a tool', 28)}`
+  if (wait.kind === 'question') return 'a question for you'
+  if (wait.kind === 'plan') return 'a plan to approve'
+  if (wait.kind === 'input') return `input for ${clip(wait.detail ?? 'a connector', 28)}`
+
+  return wait.detail ?? 'your turn'
+}
+
+// A wait as the band and the status line mark it.
+export const waitMark = (wait: Wait): string =>
+  isBlocking(wait) ? `▲ needs you: ${waitText(wait)}` : `◇ ${waitText(wait)}`
+
+export type SessionState = 'needs you' | 'working' | 'your turn' | 'idle'
+
+// What the main session is doing: a wait on the person comes before the work
+// it holds up.
+export const sessionState = (isWorking: boolean, waits: readonly Wait[]): SessionState => {
+  const top = topWait(waits)
+  if (top !== undefined && isBlocking(top)) return 'needs you'
+  if (isWorking) return 'working'
+
+  return top === undefined ? 'idle' : 'your turn'
+}
+
+// The first question of an AskUserQuestion call, read loosely.
+export const firstQuestion = (input: unknown): string | undefined => {
+  const questions = (input as { questions?: unknown } | null)?.questions
+
+  return Array.isArray(questions) ? field(questions[0], 'question') : undefined
+}
+
 // -------------------------------------------------------------------- skills
 
 // Skills whose name or description shares words with what is being worked on.
@@ -625,6 +957,112 @@ export const asHistory = (saved: unknown): TurnRecord[] => {
         typeof (one as TurnRecord).tools === 'number',
     )
     .slice(-300)
+}
+
+// ------------------------------------------------------------- carried tasks
+
+/** The task list as the store keeps it between sessions. */
+export type SavedTasks = { sessionId: string; at: number; tasks: Task[] }
+
+// How long finished work stays on the board of the sessions that follow.
+export const KEEP_DONE = 7 * 24 * HOUR
+
+const finite = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) ? value : undefined
+
+// Finished tasks marked with when they were first saved so, and the mark
+// taken off reopened ones: what a later session keeps them by.
+export const stampDone = (list: readonly Task[], now: number): Task[] =>
+  list.map(task => {
+    if (task.status === 'completed') return task.doneAt === undefined ? { ...task, doneAt: now } : task
+    if (task.doneAt === undefined) return task
+    const { doneAt: _dropped, ...rest } = task
+
+    return rest
+  })
+
+const strings = <K extends string>(raw: unknown, keys: readonly K[]): { [P in K]?: string } => {
+  const out: { [P in K]?: string } = {}
+  for (const key of keys) {
+    const value = field(raw, key)
+    if (value !== undefined) out[key] = value
+  }
+
+  return out
+}
+
+// One saved task, held to the contract's shape; one without an id, a subject
+// or a known status is dropped.
+const asTask = (raw: unknown): Task | undefined => {
+  const id = field(raw, 'id')
+  const subject = field(raw, 'subject')
+  const status = TASK_STATUSES.find(one => one === field(raw, 'status'))
+  if (id === undefined || subject === undefined || status === undefined) return undefined
+  const bag = raw as { [key: string]: unknown }
+  const areaFrom = (['tag', 'code', 'title'] as const).find(one => one === bag.areaFrom)
+  const touched: { [area: string]: number } = {}
+  if (typeof bag.touched === 'object' && bag.touched !== null) {
+    for (const [area, count] of Object.entries(bag.touched).slice(0, 40)) {
+      const edits = finite(count)
+      if (edits !== undefined) touched[area] = edits
+    }
+  }
+  const said = bag.verdict as { state?: unknown; by?: unknown; at?: unknown } | null | undefined
+  const state = (['passed', 'failed'] as const).find(one => one === said?.state)
+  const by = (['verifier', 'checks'] as const).find(one => one === said?.by)
+  const doneAt = finite(bag.doneAt)
+
+  return {
+    id,
+    subject: clip(subject, 240),
+    status,
+    area: (field(raw, 'area') ?? 'general').slice(0, 24),
+    blockedBy: Array.isArray(bag.blockedBy)
+      ? bag.blockedBy.filter((one): one is string => typeof one === 'string').slice(0, 40)
+      : [],
+    source: bag.source === 'todo' ? 'todo' : 'task',
+    ...(areaFrom === undefined ? {} : { areaFrom }),
+    ...(Object.keys(touched).length === 0 ? {} : { touched }),
+    ...(state === undefined || by === undefined
+      ? {}
+      : { verdict: { state, by, at: finite(said?.at) ?? 0 } }),
+    ...(doneAt === undefined ? {} : { doneAt }),
+    ...strings(raw, ['activeForm', 'parentId', 'owner', 'agentId', 'sessionId']),
+  }
+}
+
+// The tasks a session starts with: what the store kept of the project's
+// board, less the work finished more than a week ago. Another session's tasks
+// are marked as its own and renamed after it, since every session numbers its
+// tasks from one; the same session resumed takes its list back as it was.
+export const carryTasks = (saved: unknown, sessionId: string, now: number): Task[] => {
+  const bag = saved as { at?: unknown; tasks?: unknown } | null | undefined
+  if (typeof bag !== 'object' || bag === null || !Array.isArray(bag.tasks)) return []
+  const from = field(saved, 'sessionId') ?? 'earlier'
+  const at = finite(bag.at) ?? 0
+  const all = bag.tasks.slice(-240).flatMap(raw => asTask(raw) ?? [])
+  const kept = all.filter(
+    task => task.status !== 'completed' || now - (task.doneAt ?? at) <= KEEP_DONE,
+  )
+  if (from === sessionId) return kept
+  const mark = from.slice(0, 8)
+  const ids = new Map(
+    all.filter(task => task.sessionId === undefined).map(task => [task.id, `${mark}/${task.id}`] as const),
+  )
+
+  return kept.map(task => {
+    if (task.sessionId !== undefined) return task
+    // The loop that recorded it ended with its session.
+    const { agentId: _ended, parentId, ...rest } = task
+
+    return {
+      ...rest,
+      id: ids.get(task.id) ?? task.id,
+      sessionId: from,
+      blockedBy: task.blockedBy.map(id => ids.get(id) ?? id),
+      ...(parentId === undefined ? {} : { parentId: ids.get(parentId) ?? parentId }),
+    }
+  })
 }
 
 // A loose read of one string field off a tool's result, whatever the tool.

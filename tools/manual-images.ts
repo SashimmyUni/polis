@@ -23,7 +23,7 @@ const agentIcons = (): string => {
   const cell = 112
   const pad = 16
   const feet = 122
-  const zoom = 2.6
+  const zoom = 3.6
   const width = pad * 2 + cell * icons.length
   const height = 164
   const figures = icons
@@ -77,7 +77,7 @@ const pictures: [string, string][] = [
   ['building-states.svg', renderCity(states)],
   ['city-one-district.svg', renderCity(small)],
   ['city-busy.svg', renderCity(busy)],
-  ['city-full.svg', renderCity(full)],
+  ['city-full.svg', renderCity(full, 'wide', 1.6)],
   ['city-narrow.svg', renderCity(busy, 'column')],
   ['agent-icons.svg', agentIcons()],
 ]

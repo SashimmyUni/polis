@@ -552,7 +552,7 @@ test('on the desktop, in VS Code and on mobile every agent has an icon, and a gl
     expect(String(icons[1]?.props.alt)).toBe('Explore agent')
     for (const icon of icons) {
       expectDrawable(icon)
-      expect(icon.props).toMatchObject({ width: 44, height: 44 })
+      expect(icon.props).toMatchObject({ width: 56, height: 56 })
     }
     // The icon stands in for the glyph; it is not beside it.
     expect(await ui.find({ type: 'Text', text: /^◎$/ })).toBeUndefined()
@@ -715,13 +715,13 @@ test('in VS Code the city is one bounded Svg, every agent has an icon, and the b
   await pane.press({ key: 'view-agents' })
   const icons = await pane.findAll({ type: 'Svg' })
   expect(icons.map(icon => String(icon.props.alt))).toEqual([
-    'main agent equipped with plan',
+    'main agent holding pen and paper (plan)',
     'Explore agent',
     'polis:worker agent',
   ])
   for (const icon of icons) {
     expectDrawable(icon)
-    expect(icon.props).toMatchObject({ width: 44, height: 44 })
+    expect(icon.props).toMatchObject({ width: 56, height: 56 })
   }
   expect(await pane.find({ type: 'Text', text: 'Find the docs pages' })).toBeDefined()
   expect(await pane.find({ type: 'Text', text: /polis:worker · running/ })).toBeDefined()

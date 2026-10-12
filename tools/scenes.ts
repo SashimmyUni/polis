@@ -89,7 +89,7 @@ export const small: CityInput = {
 export const busy: CityInput = {
   ...base,
   tasks: [
-    task('1', 'Define the schema', 'api', 'completed'),
+    task('1', 'Define the schema', 'api', 'completed', { verdict: { state: 'passed', by: 'verifier', at: 0 } }),
     task('2', 'Build the endpoints', 'api', 'in_progress'),
     task('2a', 'Auth middleware', 'api', 'completed', { parentId: '2' }),
     task('2b', 'Rate limiting', 'api', 'in_progress', { parentId: '2' }),
@@ -97,11 +97,11 @@ export const busy: CityInput = {
     task('4', 'Dashboard page', 'ui', 'in_progress'),
     task('5', 'Settings page', 'ui', 'pending'),
     task('6', 'Design tokens', 'ui', 'completed'),
-    task('7', 'Dark theme', 'ui', 'completed'),
+    task('7', 'Dark theme', 'ui', 'completed', { verdict: { state: 'failed', by: 'checks', at: 0 } }),
     task('8', 'Unit tests', 'tests', 'in_progress'),
     task('9', 'Integration tests', 'tests', 'pending', { blockedBy: ['2', '4'] }),
     task('10', 'Load tests', 'tests', 'pending'),
-    task('11', 'README', 'docs', 'completed'),
+    task('11', 'README', 'docs', 'completed', { verdict: { state: 'passed', by: 'checks', at: 0 } }),
     task('12', 'API reference', 'docs', 'pending', { blockedBy: ['2'] }),
     task('13', 'Audit the old service', 'research', 'completed'),
     task('14', 'Compare queue libraries', 'research', 'completed'),
@@ -117,6 +117,13 @@ export const busy: CityInput = {
     agent('f', 'general-purpose', 'CI pipeline', { shell: 7, edit: 3, mcp: 2 }, { taskId: '15' }),
   ],
   procs: [proc('p1', 'shell', 'npm run dev'), proc('p2', 'monitor', 'Watch the build'), proc('p3', 'cron', 'every 10 minutes')],
+  // Tests passed, lint failed, types passed but edits came after: one lamp each.
+  checks: [
+    { kind: 'test', hasPassed: true, at: 0, ms: 4200, command: 'npm test', editsSince: 0 },
+    { kind: 'lint', hasPassed: false, at: 0, ms: 1800, command: 'npm run lint', editsSince: 0 },
+    { kind: 'types', hasPassed: true, at: 0, ms: 6100, command: 'tsc --noEmit', editsSince: 3 },
+  ],
+  waits: [{ kind: 'permission', at: 0, tool: 'Bash' }],
   turn: { ...base.turn, id: 't', isWorking: true, tokens: 410_000, tools: 61, expected: expectedFor('L', 'model', []) },
   usage: { ...base.usage, contextPercent: 71, contextTokens: 142_000, mainFamilies: { plan: 14, delegate: 6, read: 5, skill: 2 } },
   skills: { available: [], used: { 'code-review': 1, 'security-review': 1, dataviz: 2 }, suggested: ['simplify'] },
@@ -148,17 +155,20 @@ export const full: CityInput = {
   usage: { ...busy.usage, contextPercent: 88, contextTokens: 176_000 },
 }
 
-// One district holding a task in each of the four states a building shows,
-// and nobody at work: blocked (by the one in progress), in progress, planned
-// and done. Lots fill from the front corner back, so the blocked lot stands
-// in front where nothing hides it, and the tall finished building at the back.
+// One district holding a task in each state a building shows, and nobody at
+// work: blocked (by the one in progress), in progress, planned, and three
+// finished, verified, not checked and failed its check. Lots fill from the
+// front corner back, so the blocked lot stands in front where nothing hides
+// it, and the finished buildings at the back.
 export const states: CityInput = {
   ...base,
   tasks: [
     task('1', 'Publish the manual', 'docs', 'pending', { blockedBy: ['2'] }),
     task('2', 'Write the chapters', 'docs', 'in_progress'),
     task('3', 'Add a glossary', 'docs', 'pending'),
-    task('4', 'Draw the pictures', 'docs', 'completed'),
+    task('4', 'Draw the pictures', 'docs', 'completed', { verdict: { state: 'passed', by: 'verifier', at: 0 } }),
+    task('5', 'Write the preface', 'docs', 'completed'),
+    task('6', 'Check the links', 'docs', 'completed', { verdict: { state: 'failed', by: 'verifier', at: 0 } }),
   ],
 }
 

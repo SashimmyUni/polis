@@ -130,6 +130,7 @@ export const lookOf = (type: string): AgentLook => {
 
 export const VIEWS = [
   { name: 'overview', label: 'Overview' },
+  { name: 'project', label: 'Project' },
   { name: 'city', label: 'City' },
   { name: 'tasks', label: 'Tasks' },
   { name: 'agents', label: 'Agents' },
