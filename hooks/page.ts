@@ -25,7 +25,7 @@ const STYLE =
 // its height follows from its viewBox.
 const fluid = (svg: string): string => svg.replace(/ width="[0-9]+" height="[0-9]+"/, ' width="100%"')
 
-// One whole document. The same input always gives the same text (no clock,
+// One whole document. The same input always gives the same text (the drawing's moving parts are set to a fixed clock,
 // nothing random), so the caller can skip a write that would change nothing.
 export const cityPage = (m: CityInput, name: string): string =>
   `<!doctype html>\n` +
@@ -40,6 +40,6 @@ export const cityPage = (m: CityInput, name: string): string =>
   `</head>\n` +
   `<body>\n` +
   `<header><h1>${esc(name)}</h1><p>${esc(cityAlt(m))}</p></header>\n` +
-  `<main>${fluid(renderCity(m, 'avenue'))}</main>\n` +
+  `<main>${fluid(renderCity({ ...m, now: 0 }, 'avenue'))}</main>\n` +
   `</body>\n` +
   `</html>\n`

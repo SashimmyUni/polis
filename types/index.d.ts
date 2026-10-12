@@ -14,6 +14,47 @@ export type Task = {
   agentId?: string
   blockedBy: string[]
   source: 'task' | 'todo'
+  /** Where the area came from: a tag the model gave, the code edited, or the title. */
+  areaFrom?: 'tag' | 'code' | 'title'
+  /** Edits made for the task, by code area. */
+  touched?: { [area: string]: number }
+  /** What a verifier or a test run said of the finished work. */
+  verdict?: Verdict
+  /** When it was first saved as completed: what a later session keeps it by. */
+  doneAt?: number
+  /** The earlier session that recorded it; absent for this session's own. */
+  sessionId?: string
+}
+
+export type Verdict = { state: 'passed' | 'failed'; by: 'verifier' | 'checks'; at: number }
+
+export type CheckKind = 'test' | 'lint' | 'types' | 'build'
+
+/** The last run of one kind of check. */
+export type Check = {
+  kind: CheckKind
+  hasPassed: boolean
+  /** When it finished. */
+  at: number
+  ms: number
+  command: string
+  /** Files edited since it ran. */
+  editsSince: number
+}
+
+/** The working tree as git last told it. */
+export type GitState = {
+  branch: string
+  ahead: number
+  behind: number
+  /** Tracked files with uncommitted changes (changed, renamed, unmerged). */
+  files: number
+  /** Inserted lines. */
+  added: number
+  /** Deleted lines. */
+  removed: number
+  untracked: number
+  at: number
 }
 
 export type ToolFamily =
@@ -51,6 +92,40 @@ export type AgentRun = {
   startedAt: number
   endedAt?: number
 }
+
+/** One agent of a session, with the sub-agents it spawned under it. */
+export type AgentNode = {
+  key: string
+  type: string
+  label: string
+  name?: string
+  status: AgentRunStatus
+  tokens: number
+  tools: number
+  startedAt: number
+  endedAt?: number
+  children: AgentNode[]
+}
+
+/** What is kept of one session of the project. */
+export type SessionRecord = {
+  id: string
+  startedAt: number
+  lastActive: number
+  /** What the session was about: its first prompt, clipped. */
+  title: string
+  turns: number
+  tokens: number
+  costUsd: number
+  tasksDone: number
+  tasksTotal: number
+  filesEdited: number
+  /** The main loop's agents, each with its sub-agents nested. */
+  agents: AgentNode[]
+}
+
+/** Every session of the project, as the store keeps them. */
+export type ProjectLog = { root: string; sessions: SessionRecord[] }
 
 export type ProcKind = 'shell' | 'monitor' | 'workflow' | 'cron' | 'agent' | 'other'
 
@@ -97,6 +172,19 @@ export type Turn = {
 
 export type RateLimit = { kind: string; percentUsed: number; resetsAt?: string }
 
+/** One reading of a limit window: how full it was, and when. */
+export type LimitSample = { at: number; percent: number }
+
+/** The readings of one limit window, from which its pace is told. */
+export type LimitTrack = {
+  kind: string
+  /** When the window these readings belong to resets, as the engine gave it. */
+  resetsAt?: string
+  samples: LimitSample[]
+  /** Whether running out before the reset has been announced for this window. */
+  hasWarned: boolean
+}
+
 export type Usage = {
   contextTokens: number
   contextWindow: number
@@ -106,6 +194,19 @@ export type Usage = {
   sessionTokens: number
   mainFamilies: FamilyCounts
   hasWarnedContext: boolean
+}
+
+export type WaitKind = 'permission' | 'question' | 'plan' | 'input' | 'turn'
+
+/** Something Claude is waiting on the person for. */
+export type Wait = {
+  kind: WaitKind
+  at: number
+  /** The tool whose call waits, for a permission, a question or a plan. */
+  tool?: string
+  /** The subagent loop that asked; absent for the main loop. */
+  agentId?: string
+  detail?: string
 }
 
 export type TurnRecord = {
@@ -142,7 +243,7 @@ export type Skills = {
   suggested: string[]
 }
 
-export type ViewName = 'overview' | 'city' | 'tasks' | 'agents' | 'resources' | 'skills'
+export type ViewName = 'overview' | 'project' | 'city' | 'tasks' | 'agents' | 'resources' | 'skills'
 
 export type Ui = { view: ViewName; isBandHidden: boolean; hasOpened: boolean }
 
@@ -181,6 +282,11 @@ declare module 'claude-code' {
       ui: Ui
       activity: Activity[]
       files: FileHit[]
+      waits: Wait[]
+      limits: LimitTrack[]
+      checks: Check[]
+      git: GitState | null
+      log: ProjectLog | null
       tick: number
     }
   }

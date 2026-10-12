@@ -1,40 +1,71 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, UiOpenResult } from 'claude-code'
 
-import type { AgentRun, AgentRunStatus, Proc, Turn, Usage, ViewName } from '../types'
+import type {
+  AgentRun,
+  AgentRunStatus,
+  CheckKind,
+  Proc,
+  RateLimit,
+  Task,
+  Turn,
+  Usage,
+  ViewName,
+} from '../types'
+import { CHECK_LABEL, checksLine, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
+import { GIT_DIFF, GIT_STATUS, areaOfPath, noteTouch, parseGit, taskOfEdit } from './codemap'
 import {
+  ASKING,
   SIZES,
   SIZING_RUBRIC,
+  addWait,
   asHistory,
   asProject,
+  asTracks,
   bumpFamily,
+  carryTasks,
   clip,
   createTask,
   endProc,
   expectedFor,
   fileUrl,
+  firstQuestion,
+  forecastText,
+  forecastsOf,
   heuristicSize,
   hitFile,
+  isBlocking,
   isLive,
+  limitAlert,
+  limitName,
+  limitToast,
   matchTask,
   mergeProject,
   mergeTodos,
+  mergeTracks,
   newProject,
   patchTask,
   pick,
   projectName,
   pushActivity,
+  recordLimit,
   recordTasks,
   reconcileProcs,
   shouldAskModel,
+  stampDone,
   suggestSkills,
   taskStats,
+  topWait,
   under,
   upsertProc,
+  waitMark,
 } from './logic'
-import type { EstimateMode } from './logic'
+import type { EstimateMode, SavedTasks } from './logic'
+import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
+import { REPORT_FILE, reportOf } from './report'
 import { PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
+import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
 import { band, pane, summary } from './views'
 import type { Actions, Model } from './views'
 
@@ -93,6 +124,11 @@ const ui = atom({ plugin: 'polis', key: 'ui' } as const, {
 })
 const activity = atom({ plugin: 'polis', key: 'activity' } as const, [])
 const files = atom({ plugin: 'polis', key: 'files' } as const, [])
+const waits = atom({ plugin: 'polis', key: 'waits' } as const, [])
+const limits = atom({ plugin: 'polis', key: 'limits' } as const, [])
+const checks = atom({ plugin: 'polis', key: 'checks' } as const, [])
+const git = atom({ plugin: 'polis', key: 'git' } as const, null)
+const log = atom({ plugin: 'polis', key: 'log' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
 
 const GUIDANCE = {
@@ -102,8 +138,8 @@ const GUIDANCE = {
     'The person watches a live project dashboard (Polis). For work of three or more steps,',
     'record the steps with the task tool before starting, mark each one in progress as you',
     'begin it and completed as soon as it is verified. When creating a task, set',
-    '`metadata.area` to a short work-area name (for example api, ui, tests, docs) and, for a',
-    "sub-task, `metadata.parent` to its parent task's id. Where this session has no task",
+    '`metadata.area` to the repository directory or package it mainly touches (for example',
+    "api, web, docs) and, for a sub-task, `metadata.parent` to its parent task's id. Where this session has no task",
     `tool, record and update the same steps through the \`tasks\` of the ${PROJECT_TOOL} tool`,
     `instead. For project-level work, record the project's milestones with ${PROJECT_TOOL}`,
     'once the plan is known, and update them whenever a milestone starts or completes.',
@@ -146,7 +182,10 @@ const PROJECT_SPEC = {
             id: { type: 'string', description: 'A short stable slug.' },
             subject: { type: 'string' },
             status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'deleted'] },
-            area: { type: 'string', description: 'A short work-area name: api, ui, tests, docs.' },
+            area: {
+              type: 'string',
+              description: 'The repository directory or package it mainly touches: api, web, docs.',
+            },
             parent: { type: 'string', description: 'The id of the task this is a sub-task of.' },
             owner: { type: 'string', description: 'The name of the agent working on it.' },
             blockedBy: { type: 'array', items: { type: 'string' } },
@@ -201,6 +240,37 @@ const BACKGROUND = new Set([
   'TaskStop',
 ])
 
+// The tools whose command line may run a check, and the ones that change a file.
+const SHELLS = new Set(['Bash', 'PowerShell'])
+const EDITS = new Set(['Edit', 'Write', 'NotebookEdit'])
+
+// Limits are the account's, shared by every session of every project: their
+// readings are kept under one key, whatever the project.
+const LIMITS_KEY = 'limits'
+
+// What is known of the session itself, for its record in the project's log.
+// Tokens are counted from where the session began: a /clear goes on in the
+// same process, whose count does not start over.
+type Here = {
+  id: string
+  root: string
+  startedAt: number
+  title: string
+  turns: number
+  tokensKept: number
+  tokensFrom: number
+}
+
+const NOWHERE: Here = {
+  id: '',
+  root: '',
+  startedAt: 0,
+  title: '',
+  turns: 0,
+  tokensKept: 0,
+  tokensFrom: 0,
+}
+
 const say = ($: EngineInterface, where: string, error: unknown): void => {
   $.ui.log(`polis: ${where}: ${String(error)}`)
 }
@@ -241,20 +311,209 @@ const refresh = async ($: EngineInterface, shouldOpen: boolean): Promise<void> =
   const state = await read($, ui)
   const stats = taskStats(list)
   const live = runs.filter(isLive).length
+  const now = await $.clock.now()
+  // What needs the person comes first: where no surface draws the band or the
+  // pane (an editor's chat panel) this line is all there is to see.
+  const top = topWait(await read($, waits))
+  const alert = limitAlert(
+    forecastsOf((await read($, usage)).rateLimits, await read($, limits), now),
+    now,
+  )
+  const ran = checksLine(await read($, checks))
+  const parts = []
+  if (top !== undefined && isBlocking(top)) parts.push(waitMark(top))
+  if (alert !== undefined) parts.push(alert)
+  if (ran !== '') parts.push(ran)
+  if (stats.total > 0) parts.push(`${stats.done}/${stats.total} tasks`)
+  if (live > 0) parts.push(`${live} agent${live === 1 ? '' : 's'} running`)
 
-  if ((isBandAsked && !state.isBandHidden) || (stats.total === 0 && live === 0)) {
+  if ((isBandAsked && !state.isBandHidden) || parts.length === 0) {
     $.ui.status(undefined)
   } else {
-    const parts = []
-    if (stats.total > 0) parts.push(`${stats.done}/${stats.total} tasks`)
-    if (live > 0) parts.push(`${live} agent${live === 1 ? '' : 's'} running`)
-    $.ui.status(`◆ ${parts.join(' · ')}`)
+    const text = parts.join(' · ')
+    // A wait leads with its own mark.
+    $.ui.status(text.startsWith('▲') ? text : `◆ ${text}`)
   }
 
   if (shouldOpen && !state.hasOpened && (stats.total > 0 || runs.length > 0)) {
     await update($, ui, value => ({ ...value, hasOpened: true }))
     void openPane($).catch(() => undefined)
   }
+}
+
+const rootOf = async ($: EngineInterface): Promise<string> => {
+  const repo = await $.session.repo().catch(() => null)
+
+  return repo?.root ?? (await $.session.cwd())
+}
+
+// The session as it is now. A /clear goes on under a new id with no
+// `session.start` raised for it: the first thing seen under the new id
+// begins its record.
+const whereabouts = async ($: EngineInterface, here: Here, now: number): Promise<Here> => {
+  const id = await $.session.id().catch(() => here.id)
+  const root = here.root === '' ? await rootOf($).catch(() => '') : here.root
+  if (id === here.id) return root === here.root ? here : { ...here, root }
+
+  return {
+    ...NOWHERE,
+    id,
+    root,
+    startedAt: now,
+    tokensFrom: (await read($, usage)).sessionTokens,
+  }
+}
+
+// A tool call that ended, however it ended, is waited on no longer.
+const endWaits = async (
+  $: EngineInterface,
+  tool: string,
+  agentId: string | undefined,
+): Promise<void> => {
+  const isOver = (wait: { tool?: string; agentId?: string }): boolean =>
+    wait.tool === tool && wait.agentId === agentId
+  if (!(await read($, waits)).some(isOver)) return
+  await update($, waits, list => list.filter(wait => !isOver(wait)))
+  await refresh($, false)
+}
+
+// Reopened work is no longer what was checked. Only the task whose status
+// moved is looked at: a verifier may have judged another before it was done.
+const reopen = (before: readonly Task[], after: readonly Task[]): Task[] =>
+  after.map(task => {
+    const was = before.find(one => one.id === task.id)
+
+    return was?.status === 'completed' && task.status !== 'completed'
+      ? (dropStaleVerdicts([task])[0] ?? task)
+      : task
+  })
+
+// One more reading of the limit windows, joined with what parallel sessions
+// read, and one toast for a window on course to run out before it resets.
+const trackLimits = async ($: EngineInterface, readings: readonly RateLimit[]): Promise<void> => {
+  const now = await $.clock.now()
+  const base = mergeTracks(await read($, limits), asTracks(await $.store.get(LIMITS_KEY)))
+  let tracks = [
+    ...readings.map(limit =>
+      recordLimit(
+        base.find(track => track.kind === limit.kind),
+        limit,
+        now,
+      ),
+    ),
+    ...base.filter(track => !readings.some(limit => limit.kind === track.kind)),
+  ]
+  for (const forecast of forecastsOf(readings, tracks, now)) {
+    const track = tracks.find(one => one.kind === forecast.kind)
+    if (forecast.outlook !== 'short' || track === undefined || track.hasWarned) continue
+    tracks = tracks.map(one => (one === track ? { ...one, hasWarned: true } : one))
+    $.ui.toast(limitToast(forecast, now))
+  }
+  const kept = tracks
+  await update($, limits, () => kept)
+  await $.store.set(LIMITS_KEY, kept)
+}
+
+// The working tree, asked of git itself. Any failure leaves what was known.
+const readGit = async ($: EngineInterface, root: string): Promise<void> => {
+  if (root === '') return
+  try {
+    const init = { cwd: root, timeoutMs: 5000 }
+    const status = await $.process.run(GIT_STATUS, init)
+    if (status.exitCode !== 0) return
+    // A repository with no commit yet has no HEAD to compare with: no lines counted.
+    const diff = await $.process.run(GIT_DIFF, init)
+    const next = parseGit(status.stdout, diff.exitCode === 0 ? diff.stdout : '', await $.clock.now())
+    if (next !== null) await update($, git, () => next)
+  } catch {
+    // Not a repository, no git, or a slow one.
+  }
+}
+
+// The board as the sessions that follow will find it.
+const saveTasks = async ($: EngineInterface, here: Here): Promise<void> => {
+  if (here.root === '') return
+  const at = await $.clock.now()
+  const list = await update($, tasks, value => stampDone(value, at))
+  const saved: SavedTasks = { sessionId: here.id, at, tasks: list }
+  await $.store.set(`tasks:${here.root}`, saved)
+}
+
+// This session's record, written into the project's log. The stored log is
+// read again just before, so that a parallel session's record is not lost.
+const saveSession = async ($: EngineInterface, here: Here, isOver: boolean): Promise<void> => {
+  if (here.id === '' || here.root === '') return
+  const now = await $.clock.now()
+  // A finished session never shows a live agent.
+  const runs = isOver
+    ? await update($, agents, list =>
+        list.map(run => (isLive(run) ? { ...run, status: 'done' as const, endedAt: now } : run)),
+      )
+    : await read($, agents)
+  const measured = await read($, usage)
+  const record = sessionRecord({
+    id: here.id,
+    startedAt: here.startedAt,
+    now,
+    title: here.title,
+    turns: here.turns,
+    tokens: here.tokensKept + Math.max(0, measured.sessionTokens - here.tokensFrom),
+    costUsd: measured.costUsd,
+    // The tasks of earlier sessions are counted in their own records.
+    tasks: (await read($, tasks)).filter(task => task.sessionId === undefined),
+    filesEdited: (await read($, files)).length,
+    agents: runs,
+  })
+  const key = `log:${here.root}`
+  const next = upsertSession(asProjectLog(await $.store.get(key), here.root), record)
+  await update($, log, () => next)
+  await $.store.set(key, next)
+}
+
+// A verifier's final message, read for its answer and set on the task it was about.
+const settleVerdict = async ($: EngineInterface, agentId: string, message: string): Promise<void> => {
+  const run = (await read($, agents)).find(one => one.agentId === agentId)
+  if (run === undefined || !isVerifier(run.type)) return
+  const list = await read($, tasks)
+  const state = verdictOf(message)
+  const taskId = taskToJudge(list, run)
+  const task = list.find(one => one.id === taskId)
+  if (state === undefined || taskId === undefined || task === undefined) return
+  // The same answer reaches the mod twice: as the end of the agent's turn and as its stop.
+  const held = task.verdict
+  if (held?.by === 'verifier' && held.state === state && held.at >= run.startedAt) return
+  const at = await $.clock.now()
+  await update($, tasks, value => judge(value, taskId, state, 'verifier', at))
+  await note($, 'task', `Verifier ${state === 'passed' ? 'passed' : 'failed'}: ${task.subject}`)
+}
+
+// The session as Markdown, for a pull request or a stand-up note.
+const reportText = async ($: EngineInterface, here: Here): Promise<string> => {
+  const now = await $.clock.now()
+  const measured = await read($, usage)
+
+  return reportOf({
+    now,
+    project: await read($, project),
+    ...(here.root === '' ? {} : { root: here.root }),
+    tasks: await read($, tasks),
+    agents: await read($, agents),
+    files: await read($, files),
+    usage: measured,
+    turns: here.turns,
+    checks: (await read($, checks)).map(check => ({
+      kind: CHECK_LABEL[check.kind],
+      state: stateOf(check),
+      command: check.command,
+      at: check.at,
+    })),
+    git: await read($, git),
+    limits: forecastsOf(measured.rateLimits, await read($, limits), now).map(forecast => ({
+      label: `${limitName(forecast.kind)} limit`,
+      percentUsed: forecast.percentUsed,
+      note: forecastText(forecast, now),
+    })),
+  })
 }
 
 const countDone = async ($: EngineInterface, gained: number): Promise<void> => {
@@ -304,19 +563,34 @@ const actionsOf = ($: EngineInterface): Actions => ({
   stopTurn: () => stopTurn($),
 })
 
-const load = async ($: EngineInterface, columns: number): Promise<Model> => {
+const load = async (
+  $: EngineInterface,
+  session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
+  columns: number,
+  aspect?: number,
+): Promise<Model> => {
   await read($, tick)
+  const record = await read($, project)
 
   return {
     now: await $.clock.now(),
     columns,
+    aspect,
+    ...session,
+    // A session whose start was not seen is placed by its project's record.
+    root: session.root === '' ? (record?.root ?? '') : session.root,
+    limits: await read($, limits),
+    waits: await read($, waits),
+    checks: await read($, checks),
+    git: await read($, git),
+    log: await read($, log),
     tasks: await read($, tasks),
     agents: await read($, agents),
     procs: await read($, procs),
     turn: await read($, turn),
     usage: await read($, usage),
     history: await read($, history),
-    project: await read($, project),
+    project: record,
     skills: await read($, skills),
     ui: await read($, ui),
     activity: await read($, activity),
@@ -333,8 +607,13 @@ let hasSaidPage = false
 // picture changed: an idle session writes nothing. Asked for outright (a
 // session starting, `/city page`), it writes whatever stands there, so a
 // file since deleted comes back.
-const writePage = async ($: EngineInterface, root: string, isAsked: boolean): Promise<string> => {
-  const model = await load($, 80)
+const writePage = async (
+  $: EngineInterface,
+  session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
+  root: string,
+  isAsked: boolean,
+): Promise<string> => {
+  const model = await load($, session, 80)
   const name =
     model.project !== null && model.project.name !== '' ? model.project.name : projectName(root)
   const text = cityPage(model, name)
@@ -353,9 +632,14 @@ const writePage = async ($: EngineInterface, root: string, isAsked: boolean): Pr
 
 // The mod's own write, at the start and on its timer: a folder that cannot
 // be written is said once, not every two seconds.
-const keepPage = async ($: EngineInterface, root: string, isAsked: boolean): Promise<void> => {
+const keepPage = async (
+  $: EngineInterface,
+  session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
+  root: string,
+  isAsked: boolean,
+): Promise<void> => {
   try {
-    await writePage($, root, isAsked)
+    await writePage($, session, root, isAsked)
     hasSaidPage = false
   } catch (error) {
     if (!hasSaidPage) say($, 'writing the page on disk', error)
@@ -368,17 +652,25 @@ export const register: Register = (on, options) => {
     options.estimate === 'history' || options.estimate === 'model' ? options.estimate : 'both'
   const hasGuidance = options.guidance !== false
   const shouldAutoOpen = options.autoOpen !== false
+  const isStill = options.motion === false
   const hasPage = options.page !== false
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
+  let here: Here = NOWHERE
   // The project the page on disk is written under, once a session has started.
   let pageRoot: string | null = null
+  const session = (): Pick<Model, 'sessionId' | 'root' | 'isStill'> => ({
+    sessionId: here.id,
+    root: here.root,
+    isStill,
+  })
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'city',
-      description: 'Open the Polis project dashboard and city map',
-      argumentHint: '[overview|city|tasks|agents|resources|skills|page]',
+      description:
+        'Open the Polis project dashboard and city map, or answer with a session report or the whole project as text',
+      argumentHint: '[overview|city|tasks|agents|resources|skills|report [save]|project|page]',
     })
     await $.command.register({
       name: 'orchestrate',
@@ -443,13 +735,37 @@ export const register: Register = (on, options) => {
       await update($, skills, value => ({ ...value, available }))
 
       const measured = await $.session.usage()
-      await update($, usage, value => ({
+      const counted = await update($, usage, value => ({
         ...value,
         contextTokens: measured.context.tokens ?? value.contextTokens,
         contextWindow: measured.context.window,
         contextPercent: measured.context.percent ?? value.contextPercent,
         costUsd: measured.cost?.usd ?? value.costUsd,
       }))
+
+      // The whole project, not this session alone: the log of its sessions,
+      // and the tasks the earlier ones left on the board.
+      const tracks = asTracks(await $.store.get(LIMITS_KEY))
+      await update($, limits, list => mergeTracks(list, tracks))
+      const was = asProjectLog(await $.store.get(`log:${root}`), root).sessions.find(
+        one => one.id === sessionId,
+      )
+      here = {
+        id: sessionId,
+        root,
+        startedAt: was?.startedAt ?? now,
+        title: was?.title ?? '',
+        turns: was?.turns ?? 0,
+        tokensKept: was?.tokens ?? 0,
+        tokensFrom: counted.sessionTokens,
+      }
+      if ((await read($, tasks)).length === 0) {
+        const carried = carryTasks(await $.store.get(`tasks:${root}`), sessionId, now)
+        if (carried.length > 0) await update($, tasks, () => carried)
+      }
+      await saveSession($, here, false)
+      void readGit($, root)
+      await refresh($, false)
     } catch (error) {
       say($, 'loading the project', error)
     }
@@ -480,9 +796,9 @@ export const register: Register = (on, options) => {
     if (hasPage && pageRoot !== null) {
       const root = pageRoot
       hasSaidPage = false
-      await keepPage($, root, true)
+      await keepPage($, session(), root, true)
       $.clock.every(2000, () => {
-        void keepPage($, root, false)
+        void keepPage($, session(), root, false)
       })
     }
 
@@ -490,13 +806,26 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
+    try {
+      await saveSession($, here, true)
+      await saveTasks($, here)
+    } catch (error) {
+      say($, 'session.end', error)
+    }
     if (e.reason === 'clear') {
-      await update($, tasks, () => [])
+      // The conversation is over and the project is not: what is left to do
+      // stays on the board, as an earlier session's.
+      const now = await $.clock.now()
+      const saved: SavedTasks = { sessionId: here.id, at: now, tasks: await read($, tasks) }
+      await update($, tasks, () => carryTasks(saved, '', now))
       await update($, agents, () => [])
       await update($, procs, () => [])
       await update($, turn, () => IDLE)
       await update($, activity, () => [])
       await update($, files, () => [])
+      await update($, waits, () => [])
+      // The process goes on under an id not yet known.
+      here = { ...NOWHERE, root: here.root }
       await refresh($, false)
     }
 
@@ -534,7 +863,7 @@ export const register: Register = (on, options) => {
       let steps = ''
       if (e.tasks !== undefined) {
         const had = taskStats(await read($, tasks)).done
-        const list = await update($, tasks, value => recordTasks(value, e.tasks))
+        const list = await update($, tasks, value => reopen(value, recordTasks(value, e.tasks)))
         const stats = taskStats(list)
         await countDone($, stats.done - had)
         // Whoever owns a task in progress stands at its building.
@@ -561,6 +890,38 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'city' }, async ($, e) => {
     const wanted = e.args.trim().toLowerCase()
+    const [word = '', option = ''] = wanted.split(/\s+/)
+    // The report and the project are text wherever they are asked for.
+    if (word === 'report') {
+      const text = await reportText($, here)
+      if (option !== 'save') return { text }
+      const path = `${(await $.session.cwd()).replace(/[\\/]+$/, '')}/${REPORT_FILE}`
+      try {
+        await $.fs.write(path, text)
+
+        return { text: `Saved to ${path}\n\n${text}` }
+      } catch (error) {
+        return { text: `Could not save the report to ${path}: ${String(error)}\n\n${text}` }
+      }
+    }
+    // Where a surface draws, the word opens the Project view like any other.
+    if (word === 'project' && (await $.session.surfaces()).length === 0) {
+      const now = await $.clock.now()
+      try {
+        here = await whereabouts($, here, now)
+        await saveSession($, here, false)
+      } catch (error) {
+        say($, 'writing the session into the project log', error)
+      }
+      const kept = await read($, log)
+      if (kept === null || kept.sessions.length === 0) {
+        return { text: 'Polis has no record of this project yet: one is written as a session starts.' }
+      }
+      const name = (await read($, project))?.name ?? 'Project'
+      const lines = projectLines(kept, { now, liveId: here.id, columns: 80 })
+
+      return { text: [`${name} · ${projectHeadline(kept)}`, '', ...lines].join('\n') }
+    }
     const view = VIEWS.find(one => one.name === wanted)?.name
     // The page on disk is opened in a browser, not in the pane.
     if (wanted === 'page') {
@@ -569,7 +930,7 @@ export const register: Register = (on, options) => {
       }
       try {
         const root = pageRoot ?? (await read($, project))?.root ?? (await $.session.cwd())
-        const path = await writePage($, root, true)
+        const path = await writePage($, session(), root, true)
 
         return {
           text: [
@@ -585,11 +946,11 @@ export const register: Register = (on, options) => {
     // Where no surface draws (an editor's chat panel, a headless run) the
     // dashboard is given as the command's own text.
     if ((await $.session.surfaces()).length === 0) {
-      return { text: summary(await load($, 80)) }
+      return { text: summary(await load($, session(), 80)) }
     }
     const opened = await openAt($, view ?? (wanted === '' ? 'city' : undefined))
     if (opened.isPlaced) return { text: 'Polis opened.' }
-    const board = summary(await load($, 80))
+    const board = summary(await load($, session(), 80))
 
     return { text: `Polis is open but not drawn here yet: ${opened.reason}\n\n${board}` }
   })
@@ -624,6 +985,10 @@ export const register: Register = (on, options) => {
         endedAt: now,
         expected: expectedFor(size, 'heuristic', past),
       }))
+      // The prompt is the person's answer to whatever the main loop waited on.
+      await update($, waits, list => list.filter(wait => wait.agentId !== undefined))
+      here = await whereabouts($, here, now)
+      if (here.title === '') here = { ...here, title: clip(e.text, 80) }
 
       asked = [...asked, e.text.slice(0, 2000)].slice(-3)
       const subjects = (await read($, tasks)).map(task => task.subject)
@@ -707,6 +1072,14 @@ export const register: Register = (on, options) => {
       const { agentId } = e
       if (agentId === undefined) {
         const ended = await update($, turn, value => ({ ...value, isWorking: false, endedAt: now }))
+        // The turn is handed back: nothing of the main loop's waits on a tool any more.
+        await update($, waits, list =>
+          addWait(
+            list.filter(wait => wait.agentId !== undefined),
+            { kind: 'turn', at: now },
+          ),
+        )
+        here = { ...here, turns: here.turns + 1 }
         if (ended.expected !== null && ended.tokens > 0 && e.reason === 'answer') {
           const record = {
             size: ended.expected.size,
@@ -743,10 +1116,22 @@ export const register: Register = (on, options) => {
           await note($, 'agent', `Agent ${status === 'done' ? 'finished' : 'failed'}: ${run.label}`)
           if (status === 'failed') $.ui.toast(`Agent failed: ${clip(run.label, 60)}`)
         }
+        await update($, waits, list => list.filter(wait => wait.agentId !== agentId))
+        if (status === 'done') await settleVerdict($, agentId, e.answer)
       }
       await refresh($, shouldAutoOpen)
     } catch (error) {
       say($, 'turn.complete', error)
+    }
+    // The project's record is brought up to date each time the turn comes back.
+    if (e.agentId === undefined) {
+      try {
+        await saveTasks($, here)
+        await saveSession($, here, false)
+        void readGit($, here.root)
+      } catch (error) {
+        say($, 'saving the session', error)
+      }
     }
 
     return next(e)
@@ -815,9 +1200,28 @@ export const register: Register = (on, options) => {
     const tool = String(e.tool)
     // The dashboard's own bookkeeping tool is no part of anyone's equipment.
     if (tool === PROJECT_TOOL) return next(e)
+    let began = 0
+    let kinds: CheckKind[] = []
     try {
       const family = familyOf(tool)
       const { agentId } = e
+      began = await $.clock.now()
+      if (SHELLS.has(tool)) kinds = checksOf(pick(e, 'command') ?? '')
+      // A question or a plan waits on the person for as long as its call is in flight.
+      const asking = Object.hasOwn(ASKING, tool) ? ASKING[tool] : undefined
+      if (asking !== undefined) {
+        const detail = asking === 'question' ? firstQuestion(e) : undefined
+        await update($, waits, list =>
+          addWait(list, {
+            kind: asking,
+            at: began,
+            tool,
+            ...(agentId === undefined ? {} : { agentId }),
+            ...(detail === undefined ? {} : { detail: clip(detail, 80) }),
+          }),
+        )
+        await refresh($, false)
+      }
       if (agentId === undefined) {
         await update($, usage, value => ({
           ...value,
@@ -849,6 +1253,44 @@ export const register: Register = (on, options) => {
     }
 
     const ran = await next(e)
+    try {
+      const { agentId } = e
+      await endWaits($, tool, agentId)
+      const at = await $.clock.now()
+      // A check is told by its command, its result by how the call ended.
+      const hasPassed = kinds.length === 0 ? undefined : outcomeOf(ran, e)
+      if (hasPassed !== undefined) {
+        const before = await read($, checks)
+        const command = clip(pick(e, 'command') ?? '', 200)
+        await update($, checks, list => recordChecks(list, kinds, { hasPassed, at, ms: at - began, command }))
+        // One toast as a check starts failing, none for each run while it stays so.
+        const broken = kinds.filter(
+          kind => !hasPassed && before.find(check => check.kind === kind)?.hasPassed !== false,
+        )
+        if (broken.length > 0) {
+          const names = broken.map(kind => CHECK_LABEL[kind]).join(', ')
+          await note($, 'check', `Check failed: ${names}`)
+          $.ui.toast(`Check failed: ${names}`)
+        }
+        // A passing test run speaks for the finished work nobody has judged.
+        if (hasPassed && kinds.includes('test')) await update($, tasks, list => judgeByChecks(list, at))
+        await refresh($, false)
+      }
+      if (ran.deny === undefined && ran.isError !== true && EDITS.has(tool)) {
+        const stale = await update($, checks, noteEdit)
+        // A task lives in the district of the code edited for it.
+        const path = pick(e, 'file_path') ?? pick(e, 'notebook_path')
+        if (here.root === '') here = { ...here, root: await rootOf($).catch(() => '') }
+        const area = path === undefined || here.root === '' ? undefined : areaOfPath(path, here.root)
+        const taskId = taskOfEdit(await read($, tasks), await read($, agents), agentId)
+        if (area !== undefined && taskId !== undefined) {
+          await update($, tasks, list => noteTouch(list, taskId, area))
+        }
+        if (stale.length > 0) await refresh($, false)
+      }
+    } catch (error) {
+      say($, 'tool.call', error)
+    }
     try {
       if (ran.deny === undefined && ran.isError !== true && BACKGROUND.has(tool)) {
         const at = await $.clock.now()
@@ -948,7 +1390,7 @@ export const register: Register = (on, options) => {
       if (ran.deny === undefined && ran.isError !== true && ran.result.success) {
         const { agentId, taskId, status, owner } = e
         const before = (await read($, tasks)).find(task => task.id === taskId)
-        await update($, tasks, list => patchTask(list, e))
+        await update($, tasks, list => reopen(list, patchTask(list, e)))
         if (status === 'completed' && before !== undefined && before.status !== 'completed') {
           await note($, 'task', `Task done: ${before.subject}`)
           await countDone($, 1)
@@ -1010,8 +1452,70 @@ export const register: Register = (on, options) => {
       if (percent >= 80 && !before.hasWarnedContext) {
         $.ui.toast(`The context window is ${percent}% full`)
       }
+      const known = await read($, limits)
+      if (e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)) {
+        await trackLimits($, (await read($, usage)).rateLimits)
+        await refresh($, false)
+      }
     } catch (error) {
       say($, 'session.measure', error)
+    }
+
+    return next(e)
+  })
+
+  // A tool call held for the person's leave is the plainest "needs you" there is.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    try {
+      const at = await $.clock.now()
+      const tool = e.tool_name
+      // A question or a plan asked through the permission prompt is still that.
+      const kind = (Object.hasOwn(ASKING, tool) ? ASKING[tool] : undefined) ?? 'permission'
+      const detail = kind === 'question' ? firstQuestion(e.tool_input) : undefined
+      const agentId = e.agent_id
+      await update($, waits, list =>
+        addWait(list, {
+          kind,
+          at,
+          tool,
+          ...(agentId === undefined ? {} : { agentId }),
+          ...(detail === undefined ? {} : { detail: clip(detail, 80) }),
+        }),
+      )
+      await refresh($, false)
+    } catch (error) {
+      say($, 'classic.PermissionRequest', error)
+    }
+
+    return next(e)
+  })
+
+  on('classic.PermissionDenied', async ($, e, next) => {
+    await endWaits($, e.tool_name, e.agent_id).catch(error => say($, 'classic.PermissionDenied', error))
+
+    return next(e)
+  })
+
+  on('classic.PostToolUse', async ($, e, next) => {
+    await endWaits($, e.tool_name, e.agent_id).catch(error => say($, 'classic.PostToolUse', error))
+
+    return next(e)
+  })
+
+  on('classic.PostToolUseFailure', async ($, e, next) => {
+    await endWaits($, e.tool_name, e.agent_id).catch(error =>
+      say($, 'classic.PostToolUseFailure', error),
+    )
+
+    return next(e)
+  })
+
+  on('classic.SubagentStop', async ($, e, next) => {
+    try {
+      const message = e.last_assistant_message
+      if (message !== undefined) await settleVerdict($, e.agent_id, message)
+    } catch (error) {
+      say($, 'classic.SubagentStop', error)
     }
 
     return next(e)
@@ -1058,7 +1562,7 @@ export const register: Register = (on, options) => {
     const state = await read($, ui)
     if (e.props.hasSurvey || state.isBandHidden) return next(e)
 
-    return band($.ui.resolve(e), await load($, e.props.bodyColumns), actionsOf($))
+    return band($.ui.resolve(e), await load($, session(), e.props.bodyColumns), actionsOf($))
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -1068,10 +1572,14 @@ export const register: Register = (on, options) => {
       placement: e.props.placement,
       viewport: e.viewport ?? null,
     })
-    const model = await load($, e.props.bodyColumns)
+    // The shape of the room under the pane's own two rows, for the city: a
+    // remote surface's cells are its code font's, about 0.42 as wide as tall.
+    const down = e.props.scroll.bodyRows - 3
+    const aspect = down > 4 ? Math.min(4.5, Math.max(0.4, (e.props.bodyColumns * 0.42) / down)) : undefined
+    const model = await load($, session(), e.props.bodyColumns, aspect)
     // The terminal draws no vector graphics: it gets the city and icons as text.
     const Svg = e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg
 
-    return pane($.ui.resolve(e), model, actionsOf($), Svg, e.surface !== 'mobile')
+    return pane($.ui.resolve(e), model, actionsOf($), Svg)
   })
 }
