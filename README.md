@@ -15,11 +15,14 @@ The [user manual](docs/MANUAL.md) explains how to read every part of it.
   - **Agents** — an icon per agent carrying the tools it uses most, with status, tokens and its task.
   - **Resources** — tokens, time and tool calls against expected; context window; rate limits, each with a forecast of whether it lasts until the reset; cost; what prompts usually cost in this project.
   - **Skills** — used, suggested for the work at hand, available.
+- **Page on disk** — the city as a self-refreshing HTML file, `.polis/city.html` in the project. Open it once in a browser or a VS Code preview tab and leave it beside your editor; no server is needed.
 
 ## Commands
 
 - `/city [overview|project|city|tasks|agents|resources|skills]` — open the pane at a view. Where nothing can draw it, the command answers with the board as text, and `/city project` with the project's sessions as text.
 - `/city report` — the session as a Markdown report, as text. `/city report save` also writes it to `polis-report.md` in the working directory.
+- `/city [overview|city|tasks|agents|resources|skills]` — open the pane at a view. Where nothing can draw it, the command answers with the board as text.
+- `/city page` — reply with the path and `file:///` URL of the page on disk.
 - `/orchestrate <goal>` — plan a goal into tasks and run them with parallel agents (`polis:worker`, `polis:verifier`).
 
 ## Where it draws
@@ -42,6 +45,7 @@ Set in `/config`, or under `pluginConfigs.polis.options` in settings.
 | `guidance` | `true` | Add a short standing instruction so Claude keeps tasks and milestones current, and offer it the `mcp__polis__project` tool. |
 | `autoOpen` | `true` | Open the pane the first time tasks or agents appear in a session. |
 | `motion` | `true` | Let the city move: its cars, its boat, its fireworks. `false` draws it still. |
+| `page` | `true` | Write the city to `.polis/city.html` each time the board changes. |
 
 ## Install
 

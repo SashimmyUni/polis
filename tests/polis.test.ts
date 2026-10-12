@@ -2,7 +2,16 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, FoundElement } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { expectedFor, gaugeOf, heuristicSize, matchTask, mergeProject, newProject } from '../hooks/logic'
+import {
+  expectedFor,
+  fileUrl,
+  gaugeOf,
+  heuristicSize,
+  matchTask,
+  mergeProject,
+  newProject,
+  under,
+} from '../hooks/logic'
 import type { TurnRecord } from '../types'
 
 const PANE = {
@@ -400,6 +409,21 @@ test('milestones merge by id', () => {
     { id: 'a', title: 'First', status: 'done' },
     { id: 'b', title: 'Second', status: 'planned' },
   ])
+})
+
+test('a path becomes the file URL a browser opens', () => {
+  expect(fileUrl('C:\\Users\\jo\\app\\.polis\\city.html')).toBe('file:///C:/Users/jo/app/.polis/city.html')
+  expect(fileUrl('/work/atlas/.polis/city.html')).toBe('file:///work/atlas/.polis/city.html')
+  // Each segment is encoded by itself: the slashes between them stay.
+  expect(fileUrl('/home/jo/my app/50% #1/city.html')).toBe('file:///home/jo/my%20app/50%25%20%231/city.html')
+  expect(fileUrl('C:\\My Projects\\app/.polis/city.html')).toBe('file:///C:/My%20Projects/app/.polis/city.html')
+  expect(fileUrl('\\\\server\\share\\app\\city.html')).toBe('file://server/share/app/city.html')
+})
+
+test('a path under the root is joined the way the root is written', () => {
+  expect(under('/work/atlas', '.polis', 'city.html')).toBe('/work/atlas/.polis/city.html')
+  expect(under('C:\\work\\atlas', '.polis', 'city.html')).toBe('C:\\work\\atlas\\.polis\\city.html')
+  expect(under('C:/work/atlas/', '.polis', 'city.html')).toBe('C:/work/atlas/.polis/city.html')
 })
 
 // What `session.start` reads from the engine, for a session in /work/atlas.

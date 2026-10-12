@@ -28,6 +28,7 @@ import {
   createTask,
   endProc,
   expectedFor,
+  fileUrl,
   firstQuestion,
   forecastText,
   forecastsOf,
@@ -45,6 +46,7 @@ import {
   newProject,
   patchTask,
   pick,
+  projectName,
   pushActivity,
   recordLimit,
   recordTasks,
@@ -54,12 +56,14 @@ import {
   suggestSkills,
   taskStats,
   topWait,
+  under,
   upsertProc,
   waitMark,
 } from './logic'
 import type { EstimateMode, SavedTasks } from './logic'
 import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
 import { REPORT_FILE, reportOf } from './report'
+import { PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
 import { band, pane, summary } from './views'
@@ -594,15 +598,67 @@ const load = async (
   }
 }
 
+// The page on disk: what was last written and where, and whether a failure
+// to write it has been said already.
+let written = { path: '', text: '' }
+let hasSaidPage = false
+
+// Writes the city where a browser left open finds it, and only when the
+// picture changed: an idle session writes nothing. Asked for outright (a
+// session starting, `/city page`), it writes whatever stands there, so a
+// file since deleted comes back.
+const writePage = async (
+  $: EngineInterface,
+  session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
+  root: string,
+  isAsked: boolean,
+): Promise<string> => {
+  const model = await load($, session, 80)
+  const name =
+    model.project !== null && model.project.name !== '' ? model.project.name : projectName(root)
+  const text = cityPage(model, name)
+  const path = under(root, '.polis', 'city.html')
+  if (!isAsked && written.path === path && written.text === text) return path
+  // The folder keeps itself out of `git status`.
+  const ignore = under(root, '.polis', '.gitignore')
+  if ((isAsked || written.path !== path) && !(await $.fs.exists(ignore))) {
+    await $.fs.write(ignore, '*\n')
+  }
+  await $.fs.write(path, text)
+  written = { path, text }
+
+  return path
+}
+
+// The mod's own write, at the start and on its timer: a folder that cannot
+// be written is said once, not every two seconds.
+const keepPage = async (
+  $: EngineInterface,
+  session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
+  root: string,
+  isAsked: boolean,
+): Promise<void> => {
+  try {
+    await writePage($, session, root, isAsked)
+    hasSaidPage = false
+  } catch (error) {
+    if (!hasSaidPage) say($, 'writing the page on disk', error)
+    hasSaidPage = true
+  }
+}
+
 export const register: Register = (on, options) => {
   const mode: EstimateMode =
     options.estimate === 'history' || options.estimate === 'model' ? options.estimate : 'both'
   const hasGuidance = options.guidance !== false
   const shouldAutoOpen = options.autoOpen !== false
   const isStill = options.motion === false
+  const hasPage = options.page !== false
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
   let here: Here = NOWHERE
+  // The project the page on disk is written under, once a session has started.
+  let pageRoot: string | null = null
   const session = (): Pick<Model, 'sessionId' | 'root' | 'isStill'> => ({
     sessionId: here.id,
     root: here.root,
@@ -614,7 +670,7 @@ export const register: Register = (on, options) => {
       name: 'city',
       description:
         'Open the Polis project dashboard and city map, or answer with a session report or the whole project as text',
-      argumentHint: '[overview|city|tasks|agents|resources|skills|report [save]|project]',
+      argumentHint: '[overview|city|tasks|agents|resources|skills|report [save]|project|page]',
     })
     await $.command.register({
       name: 'orchestrate',
@@ -645,6 +701,7 @@ export const register: Register = (on, options) => {
       const now = await $.clock.now()
       const repo = await $.session.repo().catch(() => null)
       const root = repo?.root ?? e.cwd
+      pageRoot = root
       const sessionId = await $.session.id()
       // A reload runs this again while the session goes on: what the session
       // already holds for this project is newer than what the store kept.
@@ -734,6 +791,16 @@ export const register: Register = (on, options) => {
         }
       })().catch(() => undefined)
     })
+
+    // The page is there from the start, then follows the board.
+    if (hasPage && pageRoot !== null) {
+      const root = pageRoot
+      hasSaidPage = false
+      await keepPage($, session(), root, true)
+      $.clock.every(2000, () => {
+        void keepPage($, session(), root, false)
+      })
+    }
 
     return next(e)
   })
@@ -856,6 +923,26 @@ export const register: Register = (on, options) => {
       return { text: [`${name} · ${projectHeadline(kept)}`, '', ...lines].join('\n') }
     }
     const view = VIEWS.find(one => one.name === wanted)?.name
+    // The page on disk is opened in a browser, not in the pane.
+    if (wanted === 'page') {
+      if (!hasPage) {
+        return { text: 'The page on disk is turned off. Set the `page` option to true to have Polis write it.' }
+      }
+      try {
+        const root = pageRoot ?? (await read($, project))?.root ?? (await $.session.cwd())
+        const path = await writePage($, session(), root, true)
+
+        return {
+          text: [
+            `The city is written to ${path}`,
+            fileUrl(path),
+            `Open it in a browser or a preview tab: it reloads itself every ${PAGE_REFRESH_SECONDS} seconds.`,
+          ].join('\n'),
+        }
+      } catch (error) {
+        return { text: `Polis could not write the page on disk: ${String(error)}` }
+      }
+    }
     // Where no surface draws (an editor's chat panel, a headless run) the
     // dashboard is given as the command's own text.
     if ((await $.session.surfaces()).length === 0) {

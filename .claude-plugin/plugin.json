@@ -29,6 +29,12 @@
       "title": "Animate the city",
       "description": "Let the city move: its cars, its boat, its fireworks. Off draws it still",
       "default": true
+    },
+    "page": {
+      "type": "boolean",
+      "title": "Page on disk",
+      "description": "Write the city to .polis/city.html in the project each time the board changes, for a browser or preview tab left open",
+      "default": true
     }
   }
 }
