@@ -21,6 +21,7 @@ import type {
   TurnRecord,
   Wait,
   WaitKind,
+  ZoneLevel,
 } from '../types'
 
 // ---------------------------------------------------------------- formatting
@@ -816,6 +817,45 @@ export const limitToast = (forecast: LimitForecast, now: number): string => {
 
   return `The ${limitName(forecast.kind)} limit is on course to run out in about ${full}, ${early} before it resets`
 }
+
+// ---------------------------------------------------------------- smart zone
+
+// Where state-of-the-art models stop reasoning sharply, whatever the window.
+export const SMART_ZONE = 150_000
+
+// The `smartZone` option as given, or the default for anything unusable.
+export const smartZoneOf = (option: unknown): number =>
+  typeof option === 'number' && Number.isFinite(option) && option > 0 ? Math.round(option) : SMART_ZONE
+
+// The smart-zone limit: the option, or less on a window too small to hold it.
+// An unknown window leaves the option alone.
+export const zoneLimit = (window: number, smartZone: number): number =>
+  window > 0 ? Math.min(smartZone, Math.floor(window * 0.8)) : smartZone
+
+// The caution comes at 80% of the limit.
+export const zoneCaution = (limit: number): number => Math.floor(limit * 0.8)
+
+export const zoneOf = (tokens: number, limit: number): ZoneLevel =>
+  limit <= 0 ? 'inside' : tokens >= limit ? 'out' : tokens >= zoneCaution(limit) ? 'caution' : 'inside'
+
+const ZONE_RANK: Record<ZoneLevel, number> = { inside: 0, caution: 1, out: 2 }
+
+// What a new reading announces: only a climb past the level last announced.
+// Falling below the caution re-arms both warnings.
+export const zoneCrossing = (
+  announced: ZoneLevel,
+  level: ZoneLevel,
+): { announced: ZoneLevel; crossed?: ZoneLevel } => {
+  if (level === 'inside') return { announced: 'inside' }
+
+  return ZONE_RANK[level] > ZONE_RANK[announced] ? { announced: level, crossed: level } : { announced }
+}
+
+// The toast for a crossing, saying what to do about it.
+export const zoneToast = (level: ZoneLevel, tokens: number, limit: number): string =>
+  level === 'out'
+    ? `Out of the smart zone: context ${compact(tokens)} is past ${compact(limit)}. At the next phase boundary, /compact or /clear`
+    : `Smart-zone caution: context ${compact(tokens)} of ${compact(limit)}. Plan a stop: hand remaining pieces to sub-agents, or aim for the next phase boundary`
 
 // --------------------------------------------------------------------- waits
 

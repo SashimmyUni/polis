@@ -504,7 +504,7 @@ test('the band fits one row of eighty columns, leaving out the least important f
       '◎',
       'tests ✘ · lint ✘ · types ✘',
       expect.stringMatching(/^⚡\d/),
-      'ctx 10%',
+      'ctx 20k',
       'feature/text-views +120 −34',
       'Write the text views',
     ])

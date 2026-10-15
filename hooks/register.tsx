@@ -52,6 +52,8 @@ import {
   recordTasks,
   reconcileProcs,
   shouldAskModel,
+  SMART_ZONE,
+  smartZoneOf,
   stampDone,
   suggestSkills,
   taskStats,
@@ -59,6 +61,10 @@ import {
   under,
   upsertProc,
   waitMark,
+  zoneCrossing,
+  zoneLimit,
+  zoneOf,
+  zoneToast,
 } from './logic'
 import type { EstimateMode, SavedTasks } from './logic'
 import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
@@ -102,7 +108,8 @@ const UNMEASURED: Usage = {
   costUsd: 0,
   sessionTokens: 0,
   mainFamilies: {},
-  hasWarnedContext: false,
+  zoneLimit: SMART_ZONE,
+  zoneAnnounced: 'inside',
 }
 
 const tasks = atom({ plugin: 'polis', key: 'tasks' } as const, [])
@@ -654,6 +661,7 @@ export const register: Register = (on, options) => {
   const shouldAutoOpen = options.autoOpen !== false
   const isStill = options.motion === false
   const hasPage = options.page !== false
+  const smartZone = smartZoneOf(options.smartZone)
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
   let here: Here = NOWHERE
@@ -741,6 +749,7 @@ export const register: Register = (on, options) => {
         contextWindow: measured.context.window,
         contextPercent: measured.context.percent ?? value.contextPercent,
         costUsd: measured.cost?.usd ?? value.costUsd,
+        zoneLimit: zoneLimit(measured.context.window, smartZone),
       }))
 
       // The whole project, not this session alone: the log of its sessions,
@@ -1435,22 +1444,27 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     try {
       const before = await read($, usage)
-      const percent = e.context.percent ?? before.contextPercent
+      const tokens = e.context.tokens ?? before.contextTokens
+      const limit = zoneLimit(e.context.window, smartZone)
+      // One toast per climb past a level; falling below the caution re-arms them.
+      const { announced, crossed } = zoneCrossing(before.zoneAnnounced, zoneOf(tokens, limit))
       await update($, usage, value => ({
         ...value,
-        contextTokens: e.context.tokens ?? value.contextTokens,
+        contextTokens: tokens,
         contextWindow: e.context.window,
-        contextPercent: percent,
+        contextPercent: e.context.percent ?? value.contextPercent,
         rateLimits: e.rateLimits.map(limit => ({
           kind: limit.kind,
           percentUsed: limit.percentUsed,
           ...(limit.resetsAt === undefined ? {} : { resetsAt: limit.resetsAt }),
         })),
         costUsd: e.cost?.usd ?? value.costUsd,
-        hasWarnedContext: percent >= 80,
+        zoneLimit: limit,
+        zoneAnnounced: announced,
       }))
-      if (percent >= 80 && !before.hasWarnedContext) {
-        $.ui.toast(`The context window is ${percent}% full`)
+      if (crossed !== undefined) {
+        $.ui.toast(zoneToast(crossed, tokens, limit))
+        await note($, 'context', crossed === 'out' ? 'Out of the smart zone' : 'Smart-zone caution')
       }
       const known = await read($, limits)
       if (e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)) {

@@ -18,7 +18,8 @@ const USAGE: Usage = {
   costUsd: 1.234,
   sessionTokens: 1_200_000,
   mainFamilies: {},
-  hasWarnedContext: false,
+  zoneLimit: 150_000,
+  zoneAnnounced: 'inside',
 }
 
 const task = (

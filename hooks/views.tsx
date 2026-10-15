@@ -22,6 +22,7 @@ import type {
   Usage,
   ViewName,
   Wait,
+  ZoneLevel,
 } from '../types'
 import { CHECK_KINDS, CHECK_MARK, checkLines, checksLine, stateOf } from './checks'
 import type { CheckState } from './checks'
@@ -56,6 +57,7 @@ import {
   topWait,
   waitMark,
   waitText,
+  zoneOf,
 } from './logic'
 import type { LimitForecast } from './logic'
 import { projectHeadline, projectLines } from './projectlog'
@@ -126,6 +128,9 @@ const RUN_MARK = {
 } as const
 
 const STATE_COLOR = { under: C.done, within: C.run, over: C.fail } as const
+
+// The context reading: quiet in the smart zone, amber at the caution, red past the limit.
+const ZONE_COLOR: Record<ZoneLevel, string> = { inside: C.muted, caution: C.run, out: C.fail }
 
 const CHECK_COLOR = { passed: C.done, failed: C.fail, stale: C.run } as const
 
@@ -428,8 +433,8 @@ export const band = (el: El, m: Model, a: Actions): RenderElement => {
   const current = m.tasks.find(task => task.status === 'in_progress')
   const { expected } = m.turn
   const state = expected === null ? 'under' : gaugeOf(m.turn.tokens, expected.tokens).state
-  const context = m.usage.contextPercent
-  const contextColor = context >= 80 ? C.fail : context >= 60 ? C.run : C.muted
+  const context = m.usage.contextTokens
+  const zone = zoneOf(context, m.usage.zoneLimit)
   const blocker = blockerOf(m)
   const ran = checksLine(m.checks)
   const alert = limitAlert(forecastsFor(m), m.now)
@@ -467,7 +472,14 @@ export const band = (el: El, m: Model, a: Actions): RenderElement => {
       rank: 7,
     })
   }
-  if (context > 0) parts.push({ text: `ctx ${context}%`, color: contextColor, rank: 6 })
+  if (context > 0) {
+    const reading = `ctx ${compact(context)}`
+    parts.push(
+      zone === 'out'
+        ? { text: `${reading} · out of the smart zone`, color: ZONE_COLOR[zone], rank: 6, short: reading }
+        : { text: reading, color: ZONE_COLOR[zone], rank: 6 },
+    )
+  }
   if (m.git !== null) parts.push({ text: gitMark(m.git), color: C.muted, rank: 10 })
   if (current !== undefined && m.columns >= 70) {
     parts.push({ text: clip(current.activeForm ?? current.subject, 40), color: C.muted, rank: 11 })
