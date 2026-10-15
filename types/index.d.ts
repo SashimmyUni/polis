@@ -185,6 +185,9 @@ export type LimitTrack = {
   hasWarned: boolean
 }
 
+/** Where the context stands against the smart zone. */
+export type ZoneLevel = 'inside' | 'caution' | 'out'
+
 export type Usage = {
   contextTokens: number
   contextWindow: number
@@ -193,7 +196,12 @@ export type Usage = {
   costUsd: number
   sessionTokens: number
   mainFamilies: FamilyCounts
-  hasWarnedContext: boolean
+  /** The smart-zone limit in tokens, for the window last measured. */
+  zoneLimit: number
+  /** The highest smart-zone level announced since context last fell below the caution. */
+  zoneAnnounced: ZoneLevel
+  /** The highest crossing Claude has not yet been told of; 'inside' when none is owed. */
+  zoneOwed: ZoneLevel
 }
 
 export type WaitKind = 'permission' | 'question' | 'plan' | 'input' | 'turn'

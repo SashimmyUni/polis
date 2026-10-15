@@ -22,8 +22,9 @@ import type {
   Usage,
   ViewName,
   Wait,
+  ZoneLevel,
 } from '../types'
-import { CHECK_KINDS, CHECK_MARK, checkLines, checksLine, stateOf } from './checks'
+import { CHECK_KINDS, checkLines, checksLine, stateOf } from './checks'
 import type { CheckState } from './checks'
 import { cityAlt, layoutFor, renderCity } from './city'
 import { areasOfFiles, gitLine } from './codemap'
@@ -56,6 +57,7 @@ import {
   topWait,
   waitMark,
   waitText,
+  zoneOf,
 } from './logic'
 import type { LimitForecast } from './logic'
 import { projectHeadline, projectLines } from './projectlog'
@@ -97,6 +99,8 @@ export type Model = {
   root: string
   /** True when the person turned the city's motion off. */
   isStill: boolean
+  /** The next step the flow calls for, in full and as its first move. Nothing sets it yet. */
+  nextStep?: { text: string; short: string }
 }
 
 export type Actions = {
@@ -126,6 +130,9 @@ const RUN_MARK = {
 } as const
 
 const STATE_COLOR = { under: C.done, within: C.run, over: C.fail } as const
+
+// The context reading: quiet in the smart zone, amber at the caution, red past the limit.
+const ZONE_COLOR: Record<ZoneLevel, string> = { inside: C.muted, caution: C.run, out: C.fail }
 
 const CHECK_COLOR = { passed: C.done, failed: C.fail, stale: C.run } as const
 
@@ -254,7 +261,7 @@ const labelled = (
 }
 
 // The wait that holds work up until the person acts, if there is one.
-const blockerOf = (m: Model): Wait | undefined => {
+const blockerOf = (m: Pick<Model, 'waits'>): Wait | undefined => {
   const top = topWait(m.waits)
 
   return top !== undefined && isBlocking(top) ? top : undefined
@@ -287,7 +294,7 @@ const standingText = (tasks: readonly Task[]): string => {
     .join(' · ')
 }
 
-const forecastsFor = (m: Model): LimitForecast[] =>
+const forecastsFor = (m: Pick<Model, 'usage' | 'limits' | 'now'>): LimitForecast[] =>
   forecastsOf(m.usage.rateLimits, m.limits, m.now)
 
 const isShort = (forecast: LimitForecast): boolean =>
@@ -383,103 +390,91 @@ const promptBlock = (el: El, m: Model, room: Room): RenderElement[] => {
   ]
 }
 
-// ---------------------------------------------------------------------- band
+// ---------------------------------------------------------------------- strip
 
-// One piece of the band's row. Of what does not fit the width, the pieces with
-// the highest `rank` go first: cut to their `short` form where they have one,
-// and left out where that is not enough.
-type Part = { text: string; color: string; rank: number; isBold?: boolean; short?: string }
+// One element of the strip the band, City's top strip and the status line all
+// show. Of what does not fit a width, the elements with the highest `rank` go
+// first: cut to their `short` form where they have one, and left out where
+// that is not enough. Rank 0 is never left out.
+export type StripElement = { text: string; color: string; rank: number; isBold?: boolean; short?: string }
+
+// The part of the model the strip is made from: all the status line reads.
+export type StripModel = Pick<Model, 'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'nextStep'>
+
+// The strip, in its one order: what needs the person, the limit warning while
+// it fires, the next step where one is known, the smart zone and tasks done.
+// Empty where there is nothing to say.
+export const stripElements = (m: StripModel): StripElement[] => {
+  const blocker = blockerOf(m)
+  const alert = limitAlert(forecastsFor(m), m.now)
+  const context = m.usage.contextTokens
+  const zone = zoneOf(context, m.usage.zoneLimit)
+  const stats = taskStats(m.tasks)
+  const strip: StripElement[] = []
+  if (blocker !== undefined) strip.push({ text: waitMark(blocker), color: C.fail, rank: 0, isBold: true })
+  if (alert !== undefined) strip.push({ text: alert, color: C.fail, rank: 1 })
+  if (m.nextStep !== undefined) {
+    strip.push({ text: m.nextStep.text, color: C.text, rank: 2, short: m.nextStep.short })
+  }
+  if (context > 0) {
+    const reading = `ctx ${compact(context)}`
+    strip.push(
+      zone === 'out'
+        ? { text: `${reading} · out of the smart zone`, color: ZONE_COLOR[zone], rank: 3, short: reading }
+        : { text: reading, color: ZONE_COLOR[zone], rank: 3 },
+    )
+  }
+  if (stats.total > 0) strip.push({ text: `${stats.done}/${stats.total} tasks`, color: C.muted, rank: 4 })
+
+  return strip
+}
+
+// ---------------------------------------------------------------------- band
 
 // The cells the band's two buttons take, with the gaps before them.
 const BAND_BUTTONS = 16
 
-// The branch and the size of the change on it: `main +120 −34`.
-const gitMark = (git: GitState): string =>
-  git.added + git.removed > 0
-    ? `${clip(git.branch, 18)} +${git.added} −${git.removed}`
-    : clip(git.branch, 18)
-
-// The parts that fit one row of the width, in the order they were given.
-const fitParts = (parts: readonly Part[], columns: number): Part[] => {
-  let kept = [...parts]
-  const width = (): number => kept.reduce((sum, part) => sum + part.text.length + 1, BAND_BUTTONS)
-  while (width() > columns) {
-    const last = Math.max(...kept.map(part => part.rank))
-    if (kept.some(part => part.rank === last && part.short !== undefined)) {
-      kept = kept.map(({ short, ...part }) =>
-        part.rank === last && short !== undefined ? { ...part, text: short } : { ...part, short },
+// The elements that fit one row of the width, in the order they were given.
+// Needs you (rank 0) is never left out: it is cut where even it alone is too
+// wide.
+const fitStrip = (strip: readonly StripElement[], columns: number): StripElement[] => {
+  let kept = [...strip]
+  const width = (): number => kept.reduce((sum, element) => sum + element.text.length + 1, BAND_BUTTONS)
+  while (kept.length > 0 && width() > columns) {
+    const last = Math.max(...kept.map(element => element.rank))
+    if (kept.some(element => element.rank === last && element.short !== undefined)) {
+      kept = kept.map(({ short, ...element }) =>
+        element.rank === last && short !== undefined ? { ...element, text: short } : { ...element, short },
       )
-    } else if (kept.every(part => part.rank === last)) {
+    } else if (last === 0) {
       break
     } else {
-      kept = kept.filter(part => part.rank !== last)
+      kept = kept.filter(element => element.rank !== last)
     }
   }
 
   return kept
 }
 
-export const band = (el: El, m: Model, a: Actions): RenderElement => {
-  const { Box, Text, Button } = el
-  const stats = taskStats(m.tasks)
-  const progress = progressOf(m.project, m.tasks)
-  const live = m.agents.filter(isLive)
-  const [full, rest] = bar(progress.percent, 100, clamp(m.columns - 84, 6, 14))
-  const current = m.tasks.find(task => task.status === 'in_progress')
-  const { expected } = m.turn
-  const state = expected === null ? 'under' : gaugeOf(m.turn.tokens, expected.tokens).state
-  const context = m.usage.contextPercent
-  const contextColor = context >= 80 ? C.fail : context >= 60 ? C.run : C.muted
-  const blocker = blockerOf(m)
-  const ran = checksLine(m.checks)
-  const alert = limitAlert(forecastsFor(m), m.now)
-  const parts: Part[] = []
-  // What waits on the person leads the row and is the last to be left out.
-  if (blocker !== undefined) {
-    parts.push({ text: waitMark(blocker), color: C.fail, rank: 0, isBold: true })
-  }
-  parts.push({
-    text: `◆ ${clip(m.project?.name ?? 'Polis', 18)}`,
-    color: C.agent,
-    rank: 1,
-    isBold: true,
-  })
-  if (progress.total > 0) {
-    if (full !== '') parts.push({ text: full, color: C.done, rank: 9 })
-    if (rest !== '') parts.push({ text: rest, color: C.faint, rank: 9 })
-    parts.push({ text: `${progress.percent}%`, color: C.text, rank: 5 })
-  }
-  if (stats.total > 0) {
-    parts.push({ text: `${stats.done}/${stats.total} tasks`, color: C.muted, rank: 2 })
-  }
-  for (const run of live.slice(0, 6)) {
-    parts.push({ text: lookOf(run.type).glyph, color: lookOf(run.type).color, rank: 8 })
-  }
-  if (ran !== '') {
-    const worst = checksWorst(m.checks)
-    parts.push({ text: ran, color: CHECK_COLOR[worst], rank: 3, short: `checks ${CHECK_MARK[worst]}` })
-  }
-  if (alert !== undefined) parts.push({ text: alert, color: C.fail, rank: 4 })
-  if (expected !== null) {
-    parts.push({
-      text: `⚡${compact(m.turn.tokens)}/${compact(expected.tokens.high)}`,
-      color: STATE_COLOR[state],
-      rank: 7,
-    })
-  }
-  if (context > 0) parts.push({ text: `ctx ${context}%`, color: contextColor, rank: 6 })
-  if (m.git !== null) parts.push({ text: gitMark(m.git), color: C.muted, rank: 10 })
-  if (current !== undefined && m.columns >= 70) {
-    parts.push({ text: clip(current.activeForm ?? current.subject, 40), color: C.muted, rank: 11 })
-  }
+// One element of the strip as text: cut at the edge on the band, wrapped in
+// City's strip.
+const stripText = (el: El, element: StripElement, wrap: 'truncate-end' | 'wrap'): RenderElement => {
+  const { Text } = el
 
   return (
-    <Box flexDirection="row" gap={1} flexWrap="wrap">
-      {fitParts(parts, m.columns).map(part => (
-        <Text color={part.color} bold={part.isBold === true} wrap="truncate-end">
-          {part.text}
-        </Text>
-      ))}
+    <Text color={element.color} bold={element.isBold === true} wrap={wrap}>
+      {element.text}
+    </Text>
+  )
+}
+
+// The strip on one row that never wraps, then City and Hide.
+export const band = (el: El, m: Model, a: Actions): RenderElement => {
+  const { Box, Button } = el
+
+  return (
+    <Box flexDirection="row" gap={1}>
+      {fitStrip(stripElements(m), m.columns).map(element => stripText(el, element, 'truncate-end'))}
       <Button key="city" label="City" variant="primary" onPress={a.openCity} />
       <Button key="hide" label="Hide" dimColor onPress={a.hideBand} />
     </Box>
@@ -1058,14 +1053,29 @@ const cityText = (el: El, m: Model): RenderElement[] => {
   ]
 }
 
-// The picture stands alone and takes the whole room: what it has to say is
-// written on the city itself, so nothing is set under it.
+// City's top strip: the band's whole strip, which the pane has room for, so
+// nothing is dropped; it wraps where the pane is narrow, one element to a line
+// in the narrow layout. Nothing at all when the strip is empty.
+const cityStrip = (el: El, m: Model): RenderElement[] => {
+  const { Box } = el
+  const strip = stripElements(m)
+  if (strip.length === 0) return []
+
+  return [
+    <Box key="strip" flexDirection={isNarrow(m) ? 'column' : 'row'} flexWrap="wrap" columnGap={1}>
+      {strip.map(element => stripText(el, element, 'wrap'))}
+    </Box>,
+  ]
+}
+
+// The strip above the drawing. The picture takes the rest of the room: what it
+// has to say is written on the city itself, so nothing is set under it.
 const cityView = (el: El, m: Model, Svg: SvgEl | undefined): RenderElement[] => {
-  if (Svg === undefined) return cityText(el, m)
+  if (Svg === undefined) return [...cityStrip(el, m), ...cityText(el, m)]
   const { aspect } = m
   const layout = isNarrow(m) ? 'column' : aspect === undefined ? 'avenue' : layoutFor(m, aspect)
 
-  return [<Svg source={renderCity(m, layout, aspect)} alt={cityAlt(m)} isInteractive />]
+  return [...cityStrip(el, m), <Svg source={renderCity(m, layout, aspect)} alt={cityAlt(m)} isInteractive />]
 }
 
 // ------------------------------------------------------------------- summary

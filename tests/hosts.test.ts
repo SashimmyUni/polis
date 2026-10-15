@@ -92,10 +92,10 @@ test('/city answers with the board as text where no surface draws at all', async
   expect(calls.filter(call => call.startsWith('open:'))).toHaveLength(1)
 })
 
-test('with no band asked for, the status line carries the progress', async ($, on) => {
+test('with no band asked for, the status line carries tasks done, with no mark before it', async ($, on) => {
   const calls = world(on, { surfaces: ['vscode'], isPlaced: true })
   await $.tool.call({ tool: 'TodoWrite', tool_use_id: 't1', todos: [...TODOS] })
-  expect(calls.filter(call => call.startsWith('status:')).at(-1)).toBe('status:{"text":"◆ 1/2 tasks"}')
+  expect(calls.filter(call => call.startsWith('status:')).at(-1)).toBe('status:{"text":"1/2 tasks"}')
 })
 
 test('once a surface asks for the band, the status line is cleared', async ($, on) => {

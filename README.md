@@ -6,7 +6,7 @@ The [user manual](docs/MANUAL.md) explains how to read every part of it.
 
 ## What it shows
 
-- **Band** — what needs you, project progress, tasks done, working agents, the checks that have run, a usage-limit warning, this prompt's tokens against its expected range, context window, git branch.
+- **Band** — only what to act on now, on one row: what needs you, a usage-limit warning while one fires, the smart zone (context in tokens) and tasks done.
 - **Pane** (`/city`, or the band's City button), with seven views:
   - **Overview** — what needs you, the project and this session, milestones, the current prompt's actual against expected, tasks and how the finished ones stand, checks, git, agents, background processes, recent activity, most-edited files.
   - **Project** — every session of the project, with the agents each ran and their sub-agents.
@@ -31,7 +31,7 @@ The [user manual](docs/MANUAL.md) explains how to read every part of it.
 | --- | --- |
 | Claude desktop app, Code tab | Everything, with the city and agent icons as vector drawings. |
 | `claude` in a terminal, including VS Code's integrated terminal | Everything as text; the city is a row of blocks per district. |
-| VS Code extension's chat panel | Nothing is drawn there (as of extension 2.1.295). The mod's hooks still run; the status line and the text answers of `/city`, `/city project` and `/city report` are what you get, and the mod asks nothing extra of the model. |
+| VS Code extension's chat panel | The pane, with City's top strip and the city as drawings, but no band; the status line stands in for it. |
 
 The pane adapts to its size. The city is cropped to what is built and drawn to the pane's shape, in one of three layouts (wide, avenue, or a one-block-wide column under 44 columns), with its key written on the buildings. Under 44 columns bars sit under their labels.
 

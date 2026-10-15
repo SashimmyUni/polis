@@ -24,13 +24,14 @@ It watches the whole project and not one session alone. Tasks an earlier session
 | --- | --- |
 | Claude desktop app, Code tab | Everything. The city and the agent icons are vector drawings, and hovering a building or an agent shows its detail. |
 | `claude` in a terminal, including VS Code's integrated terminal | Everything, as text. The city is a row of blocks per district, and each agent is a single glyph. |
-| VS Code extension's chat panel | Nothing is drawn there (as of extension 2.1.295). The status line and the text answers of `/city`, `/city project` and `/city report` are what you get. |
+| VS Code extension's chat panel | The pane, with City's top strip and the city as drawings, but no band. The status line stands in for the band. |
 
 Polis draws only where Claude Code gives a plugin room: Claude Code raises the band slot on the terminal and the desktop app only. Polis also asks Claude Code which surfaces the session draws on, and what it does depends on the answer:
 
 - **Desktop app.** The band and the pane draw, with the city and icons as drawings.
 - **Terminal.** The band and the pane draw. The terminal draws no vector graphics, so the city and the agents' icons are text.
-- **VS Code chat panel, or a headless `claude -p` run.** No surface draws, but Polis's hooks still run, so the board, the project record, the project log and the turn history keep updating. Polis changes three things: `/city` answers with the board as plain text instead of opening a pane; it adds no standing instruction to Claude's system prompt; and it makes no small-model call to size a prompt. It still registers `mcp__polis__project` (when `guidance` is on) and its two agent types. [Using Polis in VS Code](#using-polis-in-vs-code) shows the text answer.
+- **VS Code chat panel.** The pane draws, with the city and icons as drawings, but Claude Code raises no band slot there, so the status line carries the band's elements.
+- **A headless `claude -p` run.** No surface draws, but Polis's hooks still run, so the board, the project record, the project log and the turn history keep updating. Polis changes three things: `/city` answers with the board as plain text instead of opening a pane; it adds no standing instruction to Claude's system prompt; and it makes no small-model call to size a prompt. It still registers `mcp__polis__project` (when `guidance` is on) and its two agent types. [Using Polis in VS Code](#using-polis-in-vs-code) shows the text answer, under "Where nothing draws".
 
 When a surface is attached but cannot place a pane, `/city` gives the same text after `Polis is open but not drawn here yet:` and the reason.
 
@@ -52,28 +53,22 @@ The path above is only an example: use the absolute path to your copy of the Pol
 
 ### The band above the prompt
 
-On the desktop app and in a terminal, Polis draws one band directly above the prompt. From left to right:
+On the desktop app and in a terminal, Polis draws one band directly above the prompt. It shows only what to act on now, from left to right:
 
 | Element | Meaning |
 | --- | --- |
-| `◆ atlas` | The project's name, cut to 18 characters. By default it is the folder name of the repository root (of the working directory outside a repository), or `Scratch` when the path runs through a `scratch-workspaces` folder. Claude can set it through the project tool. |
-| `▲ needs you: permission for Bash` | First on the row, bold rose, and the last thing to be left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan (see "What needs you"). |
-| `◆ atlas` | The project's name, cut to 18 characters. By default it is the folder name of the repository root (of the working directory outside a repository), or `Scratch` when the path runs through a `scratch-workspaces` folder. Claude can set it through the project tool. |
-| `███░░░ 50%` | Progress, shown once there is something to count. It counts the project's milestones if Claude has recorded any, otherwise the top-level tasks (those with no parent) on the board, which include unfinished ones an earlier session left. Each finished item counts one and each item in progress counts half. |
+| `▲ needs you: permission for Bash` | First on the row, bold rose, and never left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan (see "What needs you"). |
+| `⚠ 5h limit out in 1h20m` | Rose. Shown only while a usage limit is on course to run out before it resets, or as `⚠ 5h limit reached` once full (see "Usage limits"). Absent while every limit is fine. |
+| `ctx 122k` | The context the session holds, in tokens: grey inside the smart zone, amber from the smart-zone caution, and rose past the smart-zone limit, where it reads `ctx 151k · out of the smart zone`. Hidden while it reads 0. |
 | `2/5 tasks` | Tasks done out of all tasks on the board, sub-tasks included. Hidden while the board is empty. |
-| `⚒ ◎` | One glyph per working agent, up to six, colored by type: ◎ Explore, ▧ Plan, ⚒ worker, ✓ verifier, ● anything else. |
-| `tests ✔ · lint ✘` | The checks that have run, each with its mark: ✔ passed, ✘ failed, ◌ passed but stale. The color is the worst of them. In a narrow band it shortens to `checks ✘`. Absent until a check has run (see "Checks"). |
-| `⚠ 5h limit out in 1h20m` | Rose. A usage limit on course to run out before it resets, or `⚠ 5h limit reached` once full (see "Usage limits"). |
-| `⚡12k/90k` | Tokens this prompt has used so far, against the top of the range expected for it. Green while below the range, amber inside it, rose above it. It appears after your first prompt and keeps the last prompt's figure until the next one. The range comes from this project's past prompts of the same size once it has five of them, and from starting defaults before that. |
-| `ctx 38%` | How full the context window is. Grey, amber from 60%, rose from 80%. Hidden while it reads 0. |
-| `main +120 −34` | The git branch (cut to 18 characters) and the lines added and removed in the working tree against `HEAD`. Just the branch when nothing is changed. Absent outside a repository. |
-| Current task | The first task in progress, in its present-tense wording ("Running tests") if it has one, cut to 40 characters. Shown only when the band is at least 70 columns wide. |
 | **City** | Opens the pane at the City view. |
 | **Hide** | Hides the band. |
 
-The band wraps onto more lines when it is narrow. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, parts go in this order: the current task, the git mark, the bar, the agents, the tokens, the context, the percentage, the limit warning, the checks, the task count and the name. What needs you is never dropped before them.
+With nothing to show, the band holds just **City** and **Hide**. The project name, progress, agents, checks, this prompt's tokens, git and the current task are not on the band: the pane's views carry them.
 
-**Hide** removes the band for the rest of the session. Running `/city` brings it back (and opens the pane). While the band is hidden, and wherever no surface has asked for a band, Polis puts a short line in the status line under the prompt instead, for example `◆ tests ✔ · 2/5 tasks · 1 agent running`. It holds what needs you, a limit warning, the checks, the task count and the working agents, each only when it is not zero, and the line is cleared when there is nothing to say. A line that starts with what needs you has no `◆`. Whether a host shows that line is up to the host.
+The band is always one row. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, elements go in this order: the task count, then the smart zone's `· out of the smart zone` tail, then the smart zone, then the limit warning. What needs you, **City** and **Hide** are never dropped.
+
+**Hide** removes the band for the rest of the session. Running `/city` brings it back (and opens the pane). While the band is hidden, and wherever no surface has asked for a band, Polis puts the band's elements in the status line under the prompt instead, as plain text joined by ` · `, in the band's order, for example `▲ needs you: permission for Bash · ctx 125k · 2/5 tasks`. The line starts with whatever comes first; there is no `◆`. It uses the band's wording, smart zone included, and keeps every element, since it has no width of its own to fit. Checks and working agents are not on it, as they are not on the band. The line is cleared when there is nothing to say. Whether a host shows that line is up to the host.
 
 ### Opening the pane
 
@@ -87,7 +82,7 @@ Three words give text and open nothing, wherever you are:
 | `/city report save` | Does the same and also writes the report to `polis-report.md` in the session's working directory. |
 | `/city page` | Replies with the path and `file:///` URL of the page on disk (see "A self-refreshing page on disk"). |
 
-Where nothing draws (the VS Code chat panel, a headless run), `/city project` answers with the project's sessions as text too, and every other `/city` gives the board as text. Where a surface draws, `/city project` opens the pane at the Project view.
+Where nothing draws (a headless run), `/city project` answers with the project's sessions as text too, and every other `/city` gives the board as text. Where a surface draws, `/city project` opens the pane at the Project view.
 
 ![A new session's city](images/city-new.svg)
 
@@ -99,7 +94,7 @@ The pane shows `◆ POLIS`, the project's name and phase, and one tab per view. 
 | --- | --- | --- |
 | 1 | Overview | What needs you, the project and this session, milestones and progress, this prompt against its expected range, tasks, checks, git, working agents, background processes, recent activity and the most-edited files. Buttons: **Orchestrate** (o), **Clear finished** (c), and **Stop turn** (s) while a prompt is running. |
 | 2 | Project | Every session of this project, newest first, with the agents each ran and their sub-agents. |
-| 3 | City | The map (a row of blocks per district in a terminal). |
+| 3 | City | The top strip (the band's elements: what needs you, the limit warning, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). |
 | 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task. |
 | 5 | Agents | The main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
 | 6 | Resources | Tokens, time and tool calls against expected; the context window; rate limits with a forecast for each, and cost; tokens by agent; what prompts usually cost in this project. |
@@ -141,7 +136,7 @@ Polis watches Claude's task tools and its agent spawns; you do not enter anythin
 
 A district is a code area: the instruction asks for the directory or package a task touches, and Polis moves a task to the area its edits land in when Claude did not name one.
 
-Polis skips it in a session where nothing draws (the VS Code chat panel, a headless run). To switch it off everywhere, set `guidance` to `false`; that also stops Polis registering the project tool, so Claude can no longer record milestones. Progress then follows the tasks, unless milestones were recorded for the project in an earlier session, in which case it keeps counting those.
+Polis skips it in a session where nothing draws (a headless run). To switch it off everywhere, set `guidance` to `false`; that also stops Polis registering the project tool, so Claude can no longer record milestones. Progress then follows the tasks, unless milestones were recorded for the project in an earlier session, in which case it keeps counting those.
 
 ### Planning with agents: /orchestrate
 
@@ -209,11 +204,11 @@ VS Code has two places to run Claude Code, and Polis shows a different amount in
 | Where | What you see |
 | --- | --- |
 | The integrated terminal, running `claude` | The same as in any terminal. The band sits above the prompt, `/city` opens the pane, and everything in it is text: the city is a row of blocks per district, agents are single glyphs, the Project view and the Checks section are lines. There are no vector drawings and no hover. |
-| The extension's chat panel | Nothing is drawn (as of extension 2.1.295): no band, no pane, no city. Polis's hooks still run and keep the board, the log and the history current. What you get is the **status line** and the **text answers** of three commands. |
+| The extension's chat panel | The pane draws, with City's top strip, the city and the agents as vector drawings, but there is no band: Claude Code raises no band slot there. The **status line** stands in for the band. |
 
-**In the chat panel.** The status line (if the host shows it) is one row under the prompt, and it carries only what is not zero or empty, in this order: what needs you (`▲ needs you: permission for Bash`), a usage limit on course to run out (`⚠ 5h limit out in 1h20m`), the checks that have run (`tests ✔ · lint ✘`), tasks done out of all (`2/5 tasks`), and working agents (`1 agent running`). With nothing to say, the line is cleared. Whether the extension shows a status line has not been confirmed.
+**In the chat panel.** `/city` opens the pane as anywhere else. The status line (if the host shows it) is one row under the prompt carrying the band's elements as plain text joined by ` · `, each only when it has something to say, in this order: what needs you (`▲ needs you: permission for Bash`), a usage limit on course to run out (`⚠ 5h limit out in 1h20m`), the smart zone (`ctx 125k`, or `ctx 151k · out of the smart zone`), and tasks done out of all (`2/5 tasks`). There is no `◆` before it, and no checks or agent count in it. With nothing to say, the line is cleared. Whether the extension shows a status line has not been confirmed.
 
-The three commands answer as text:
+**Where nothing draws** (a headless `claude -p` run, or a surface that cannot place a pane), three commands answer as text:
 
 - `/city` answers with the board. Any argument is ignored there.
 - `/city project` answers with the whole project: its name and totals, then its sessions with their agents.
@@ -252,7 +247,7 @@ Project: 12 sessions · 31 agents · 9 sub-agents · 4.2M tokens · $18.40
 | `Background:` | Running background processes. |
 | `Project:` | The totals of the project's log. |
 
-Anything beyond that (the city, the Project view as a list you can scroll, the Checks section) needs the integrated terminal or the desktop app. For the visuals in VS Code, run `claude` in the integrated terminal.
+Anything beyond that (the city, the Project view as a list you can scroll, the Checks section) needs a surface that draws the pane.
 
 ## Reading the city
 
@@ -402,7 +397,7 @@ The city is drawn at night, and most of what moves in it is there for atmosphere
 
 | What you see | What it means |
 | --- | --- |
-| The moon | **Project progress.** It is a thin crescent at 0%, half lit at 50% and full at 100%, using the same percentage as the band. Hover it for the number. |
+| The moon | **Project progress.** It is a thin crescent at 0%, half lit at 50% and full at 100%, using the same percentage as the Overview. Hover it for the number. |
 | Fireworks over City Hall | **Every task on the board is done.** They stop as soon as a new task arrives. |
 
 The rest means nothing and is the same in every session:
@@ -502,7 +497,7 @@ Hovering works where the host draws the city as a picture and has a pointer, suc
 
 ### Size and the three layouts
 
-The picture is the whole City view: nothing is written under it. Polis crops the drawing to what is built, then lets it out to the shape of the pane, so the city is as large as the pane allows. A pane that is wider or taller than the city gets more night sky around it, not a smaller city in a corner.
+The City view opens with its top strip: the same elements as the band, in the band's order (what needs you, the limit warning while it fires, the smart zone and tasks done), so the band is a one-line preview of City. The pane has room the band lacks, so the strip drops nothing: it wraps as the pane narrows, and in the column layout it stacks one element to a line. With nothing to say there is no strip. It shows wherever the pane draws, VS Code included, where there is no band. Below the strip, the picture takes the rest of the view: nothing is written under it. Polis crops the drawing to what is built, then lets it out to the shape of the pane, so the city is as large as the pane allows. A pane that is wider or taller than the city gets more night sky around it, not a smaller city in a corner.
 
 Polis works out the pane's shape from the size the host reports, and picks the layout that draws the city largest in it (the column only when it is at least a quarter larger, since its key is a list and not on the buildings):
 
@@ -518,7 +513,7 @@ The width of the pane switches between them. Under 44 columns you get the column
 
 ### The terminal's text version
 
-A terminal cannot draw pictures, so the City view is a row of text per district:
+A terminal cannot draw pictures, so under the top strip the City view is a row of text per district:
 
 ```
 ◆ city hall needs you ●
@@ -540,7 +535,7 @@ ui         █ █ ✘ 3/3
 | `⚒` at the row's end | A running agent working on a task in this district, in the type's glyph and color (see the table above). |
 | `⚡ power` | The context window: a 10-cell bar and the percentage. |
 | `◈ works` and `✦ library` | Running background processes and skills used. |
-| `▣ checks:` | The checks that have run, as in the band, or `none run yet`. |
+| `▣ checks:` | The checks that have run, as `tests ✔ · lint ✘` in the order tests, lint, types, build, or `none run yet`. |
 | `▲ needs you:` or `◇ your turn` | What the main session waits on you for, and for how long; or that the turn is yours. Absent when neither applies. |
 | The last line | The key to the blocks above. Absent until a task is done. |
 
@@ -580,7 +575,7 @@ Where it shows:
 | Place | What you see |
 | --- | --- |
 | Band | `▲ needs you: permission for Bash`, first on the row, bold rose. |
-| Status line | The same text, leading the line (without the `◆`). It is the one thing a chat panel with no band shows live. |
+| Status line | The same text, leading the line. In a chat panel with no band it stands in for the band. |
 | Overview | A `▲ NEEDS YOU` block above everything else, up to three waits, each as `permission for Bash · asked by writer · waiting 2m05s` (the `asked by` part only when an agent raised it), with the question's text beneath it. |
 | City | The flag on City Hall turns rose, a speech bubble with `!` rises over the main session's figure, and the first callout reads `session needs you` (or `your turn`, amber). |
 | Text city and `/city` answer | `◆ city hall needs you`, then `▲ needs you: permission for Bash · waiting 2m05s`; the `/city` answer puts it on its second line. |
@@ -632,7 +627,6 @@ Running a check again replaces its earlier result. A change made through a shell
 
 | Place | What you see |
 | --- | --- |
-| Band and status line | `tests ✔ · lint ✘`, only the kinds that have run, in the order tests, lint, types, build. In a narrow band `checks ✘`. |
 | Overview | A CHECKS section with a line each: `✘ tests   failed just now · 0ms · npm test`, or `◌ tests   stale: 2 edits since it passed 4m ago · npm test`. It shows the state, when, how long the run took, and the command (cut to 48 characters). Absent until a check has run. |
 | City | The signal mast beside the civic block, one lamp per kind. |
 | Text city and `/city` answer | `▣ checks: tests ✔ · lint ✘` (`none run yet` before any), and a `Checks:` line. |
@@ -661,7 +655,7 @@ The line reads `main ↑1 ↓2 · 5 files +120 −34 · 2 untracked`:
 - the files git does not track yet;
 - `clean` when there is nothing to report.
 
-A repository with no commit yet has no `HEAD`: the files are counted but no lines are. The Overview shows the line as the note of a GIT heading, the `/city` answer as `Git:`, the band shortens it to `main +120 −34`, and the session report puts the branch and the change in its header.
+A repository with no commit yet has no `HEAD`: the files are counted but no lines are. The Overview shows the line as the note of a GIT heading, the `/city` answer as `Git:`, and the session report puts the branch and the change in its header.
 
 ### Verified and done
 
@@ -858,7 +852,7 @@ The block opens with `medium · sized by heuristic · range from starting defaul
 3. Big-work words move it up one size (XL stays XL): refactor, implement, build, migrate, rewrite, redesign and orchestrate in any of their forms (refactoring, building, migration), and end-to-end, across, entire, whole, every, "all of".
 4. Then, if it is still S or M, begins with a question word (what, why, how, where, when, which, who, is, are, does, do, can, could, explain, show, tell), is under 300 characters and has no big-work word, it is S.
 
-**Sizing by a small model.** The `estimate` option (in `/config`) has three values. `history`: rules only, no model call. `model`: ask a small model about every prompt. `both` (the default): rules first, and the model only when the prompt is 400 characters or longer, has four or more lines, or the rules already said L or XL. The model gets the class descriptions above plus the first 4,000 characters of your prompt and must answer with one label. Your prompt never waits: the rule size shows at once and the model's answer replaces it when it arrives (the header then reads "sized by model"). If the call fails or answers anything else, the rule size stands. It happens only where something can draw, so never in the VS Code extension's panel.
+**Sizing by a small model.** The `estimate` option (in `/config`) has three values. `history`: rules only, no model call. `model`: ask a small model about every prompt. `both` (the default): rules first, and the model only when the prompt is 400 characters or longer, has four or more lines, or the rules already said L or XL. The model gets the class descriptions above plus the first 4,000 characters of your prompt and must answer with one label. Your prompt never waits: the rule size shows at once and the model's answer replaces it when it arrives (the header then reads "sized by model"). If the call fails or answers anything else, the rule size stands. It happens only where something can draw, so never in a headless run.
 
 **The expected range.** Until this project has five recorded turns of that size, the range is the starting default times 0.4 for the low end and times 1.5 for the high end (the table's last column); the header says "starting defaults". From the fifth recorded turn of a size, the range is the 25th to 80th percentile of those turns' tokens, time and tools, and the header says "range from N past turns". Ranges are per project and per size; Polis keeps the latest 300 turns.
 
@@ -907,12 +901,12 @@ A turn is added to this project's history when the main session finishes it with
 | --- | --- | --- |
 | The pane is very narrow | The desktop app docks it about 20 columns wide when the conversation shares the window with other panes. Polis asks for 68 by 46, but your own size wins. Under 44 columns the narrow layout is used. | Drag the pane's edge wider or close another pane. `/city` repeats the request, but a size you set yourself wins. |
 | The city has no districts | Districts are the tasks' areas. No tasks on the board: Claude had not made any (Polis asks it to record work of three or more steps), `guidance` is off, or **Clear finished** removed them all. (`/clear` does not empty the board: the project's tasks stay on it.) | Look at the Tasks view. Ask Claude to plan its steps as tasks, or use `/orchestrate`. Check `guidance` is on. |
-| Nothing draws in the VS Code extension's panel | The panel offers Polis nowhere to draw (as of extension 2.1.295). The hooks run, but Polis adds no instruction for Claude and makes no model call there. | Type `/city` for a text board, `/city project` for the sessions, `/city report` for a report; the status line carries what needs you. For the visuals, use the desktop app's Code tab, or `claude` in a terminal (see "Using Polis in VS Code"). |
-| The band has disappeared | You pressed **Hide**; Claude Code is showing a feedback survey, which the band steps aside for; or the surface never asked for a band (the VS Code panel). | `/city` brings it back (and opens the pane). While it is hidden, the status line carries `◆ tests ✔ · 3/7 tasks · 2 agents running` (and what needs you, and a limit warning), and nothing once there is nothing to say. |
+| No band in the VS Code extension's panel | Claude Code raises no band slot there; the pane still draws. | The status line carries the band's elements, and City's top strip shows them in the pane (see "Using Polis in VS Code"). |
+| The band has disappeared | You pressed **Hide**; Claude Code is showing a feedback survey, which the band steps aside for; or the surface never asked for a band (the VS Code panel). | `/city` brings it back (and opens the pane). While it is hidden, the status line carries the band's elements, such as `ctx 125k · 3/7 tasks` (and what needs you, and a limit warning), and nothing once there is nothing to say. |
 | The expected ranges look far off | Under five recorded turns of that size, the range is a generic default. Or the rules misjudged a short but heavy prompt (they judge by text alone) or a long pasted one. Or the project's history mixes very different work. | Wait for five turns. Set `estimate` to `model` so a small model sizes every prompt. As a last resort, with Claude Code closed, delete the `history:` entry for the project from the store file below. |
 | A background process still shows after it ended | Polis learns of an ending when Claude stops the process (TaskStop, CronDelete) or from the list Claude Code gives each time Claude finishes answering. One that exits by itself mid-turn stays until then. | It clears when Claude next finishes. **Clear finished** does not remove running entries; `/clear` empties the list. |
 | Tasks from an earlier session are on the board | A session starts with the project's unfinished tasks, and its finished ones from the last 7 days (see "What Polis remembers"). They are tagged `earlier session`. | **Clear finished** removes the finished ones; unfinished ones leave when Claude marks them done and they are cleared, or are deleted. |
 | Every finished task reads "verified by tests", or none does | A passing test run verifies every finished task that nobody has judged, and a task finished after that run waits for the next one. | Run the tests again, or have `polis:verifier` check the task (see "Verified and done"). |
 | The layout looks wrong in one place | The numbers each surface gave Polis. | Open the store file, below. |
 
-**Where the layout numbers are kept.** Polis writes them to the store file whose name starts with `polis` in `~/.claude/plugins/store/` (on Windows, `C:\Users\<you>\.claude\plugins\store\`), under the key `rooms`. Each surface has a `desktop:pane` and `desktop:band` style entry (`terminal:`, `mobile:` and so on) holding `bodyColumns`, `bodyRows` or `maxRows`, `placement` and `viewport` as JSON text. A `bodyColumns` under 44 explains the narrow layout; the band drops the current task's name below 70. An entry is written within about five seconds of changing.
+**Where the layout numbers are kept.** Polis writes them to the store file whose name starts with `polis` in `~/.claude/plugins/store/` (on Windows, `C:\Users\<you>\.claude\plugins\store\`), under the key `rooms`. Each surface has a `desktop:pane` and `desktop:band` style entry (`terminal:`, `mobile:` and so on) holding `bodyColumns`, `bodyRows` or `maxRows`, `placement` and `viewport` as JSON text. A `bodyColumns` under 44 explains the narrow layout. An entry is written within about five seconds of changing.

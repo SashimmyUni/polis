@@ -90,3 +90,24 @@ test('no page carries a value that failed to compute', () => {
     }
   }
 })
+
+test('the header says what needs the person, the smart-zone state and the tasks done', () => {
+  const waiting = {
+    ...small,
+    waits: [{ kind: 'permission' as const, at: 0, tool: 'Write' }],
+    usage: { ...small.usage, contextTokens: 125_000 },
+  }
+  const page = cityPage(waiting, 'atlas')
+  const header = page.slice(page.indexOf('<header>'), page.indexOf('</header>'))
+
+  expect(header).toContain('<span class="needs">▲ needs you: permission for Write</span>')
+  expect(header).toContain('<span class="caution">ctx 125k: smart-zone caution</span>')
+  expect(header).toMatch(/<span>\d+\/\d+ tasks done<\/span>/)
+
+  const past = cityPage({ ...small, usage: { ...small.usage, contextTokens: 160_000 } }, 'atlas')
+  expect(past).toContain('<span class="out">ctx 160k: out of the smart zone</span>')
+  // Inside the smart zone the reading is quiet, and with nothing waiting the session's state stands first.
+  const calm = cityPage(small, 'atlas')
+  expect(calm).toContain('<span>ctx 68k</span>')
+  expect(calm).toMatch(/<h1>atlas<\/h1><span>(working|your turn|idle)<\/span>/)
+})

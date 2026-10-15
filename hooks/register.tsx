@@ -12,7 +12,7 @@ import type {
   Usage,
   ViewName,
 } from '../types'
-import { CHECK_LABEL, checksLine, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
+import { CHECK_LABEL, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
 import { GIT_DIFF, GIT_STATUS, areaOfPath, noteTouch, parseGit, taskOfEdit } from './codemap'
 import {
   ASKING,
@@ -34,9 +34,7 @@ import {
   forecastsOf,
   heuristicSize,
   hitFile,
-  isBlocking,
   isLive,
-  limitAlert,
   limitName,
   limitToast,
   matchTask,
@@ -52,13 +50,19 @@ import {
   recordTasks,
   reconcileProcs,
   shouldAskModel,
+  SMART_ZONE,
+  smartZoneOf,
   stampDone,
   suggestSkills,
   taskStats,
-  topWait,
   under,
   upsertProc,
-  waitMark,
+  zoneCrossing,
+  zoneLimit,
+  zoneNote,
+  zoneOf,
+  zoneOwing,
+  zoneToast,
 } from './logic'
 import type { EstimateMode, SavedTasks } from './logic'
 import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
@@ -66,8 +70,8 @@ import { REPORT_FILE, reportOf } from './report'
 import { PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
-import { band, pane, summary } from './views'
-import type { Actions, Model } from './views'
+import { band, pane, stripElements, summary } from './views'
+import type { Actions, Model, StripModel } from './views'
 
 const PANE = 'polis'
 const TITLE = 'Polis'
@@ -102,7 +106,9 @@ const UNMEASURED: Usage = {
   costUsd: 0,
   sessionTokens: 0,
   mainFamilies: {},
-  hasWarnedContext: false,
+  zoneLimit: SMART_ZONE,
+  zoneAnnounced: 'inside',
+  zoneOwed: 'inside',
 }
 
 const tasks = atom({ plugin: 'polis', key: 'tasks' } as const, [])
@@ -304,42 +310,36 @@ const measure = (site: string, room: object): void => {
 let isBandAsked = false
 
 // The status line stands in for the band while the band is hidden, and where
-// no surface draws one.
+// no surface draws one: the band's strip as plain text, every element kept,
+// since the line has no width of its own. Where no surface draws the band or
+// the pane (an editor's chat panel) this line is all there is to see.
 const refresh = async ($: EngineInterface, shouldOpen: boolean): Promise<void> => {
-  const list = await read($, tasks)
-  const runs = await read($, agents)
   const state = await read($, ui)
-  const stats = taskStats(list)
-  const live = runs.filter(isLive).length
-  const now = await $.clock.now()
-  // What needs the person comes first: where no surface draws the band or the
-  // pane (an editor's chat panel) this line is all there is to see.
-  const top = topWait(await read($, waits))
-  const alert = limitAlert(
-    forecastsOf((await read($, usage)).rateLimits, await read($, limits), now),
-    now,
+  const model = await loadStrip($)
+  const strip = stripElements(model)
+  $.ui.status(
+    (isBandAsked && !state.isBandHidden) || strip.length === 0
+      ? undefined
+      : strip.map(element => element.text).join(' · '),
   )
-  const ran = checksLine(await read($, checks))
-  const parts = []
-  if (top !== undefined && isBlocking(top)) parts.push(waitMark(top))
-  if (alert !== undefined) parts.push(alert)
-  if (ran !== '') parts.push(ran)
-  if (stats.total > 0) parts.push(`${stats.done}/${stats.total} tasks`)
-  if (live > 0) parts.push(`${live} agent${live === 1 ? '' : 's'} running`)
+  if (!shouldOpen || state.hasOpened) return
 
-  if ((isBandAsked && !state.isBandHidden) || parts.length === 0) {
-    $.ui.status(undefined)
-  } else {
-    const text = parts.join(' · ')
-    // A wait leads with its own mark.
-    $.ui.status(text.startsWith('▲') ? text : `◆ ${text}`)
-  }
-
-  if (shouldOpen && !state.hasOpened && (stats.total > 0 || runs.length > 0)) {
+  const stats = taskStats(model.tasks)
+  if (stats.total > 0 || (await read($, agents)).length > 0) {
     await update($, ui, value => ({ ...value, hasOpened: true }))
     void openPane($).catch(() => undefined)
   }
 }
+
+// Only the stores the strip is made from: the status line follows every move
+// of the context, so it reads no more than it shows.
+const loadStrip = async ($: EngineInterface): Promise<StripModel> => ({
+  now: await $.clock.now(),
+  waits: await read($, waits),
+  limits: await read($, limits),
+  usage: await read($, usage),
+  tasks: await read($, tasks),
+})
 
 const rootOf = async ($: EngineInterface): Promise<string> => {
   const repo = await $.session.repo().catch(() => null)
@@ -654,6 +654,7 @@ export const register: Register = (on, options) => {
   const shouldAutoOpen = options.autoOpen !== false
   const isStill = options.motion === false
   const hasPage = options.page !== false
+  const smartZone = smartZoneOf(options.smartZone)
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
   let here: Here = NOWHERE
@@ -741,6 +742,7 @@ export const register: Register = (on, options) => {
         contextWindow: measured.context.window,
         contextPercent: measured.context.percent ?? value.contextPercent,
         costUsd: measured.cost?.usd ?? value.costUsd,
+        zoneLimit: zoneLimit(measured.context.window, smartZone),
       }))
 
       // The whole project, not this session alone: the log of its sessions,
@@ -841,6 +843,24 @@ export const register: Register = (on, options) => {
       return { sections: [...composed.sections, GUIDANCE] }
     })
 
+    // A smart-zone crossing reaches Claude once, beside the person's next
+    // prompt: never through the system prompt (ADR 0001).
+    on('prompt.submit', async ($, e, next) => {
+      try {
+        const measured = await read($, usage)
+        if (measured.zoneOwed !== 'inside') {
+          const text = zoneNote(measured.zoneOwed, measured.contextTokens, measured.zoneLimit)
+          await update($, usage, value => ({ ...value, zoneOwed: 'inside' as const }))
+
+          return next({ ...e, context: [...(e.context ?? []), text] })
+        }
+      } catch (error) {
+        say($, 'prompt.submit', error)
+      }
+
+      return next(e)
+    })
+
     // The mod's own tool writes nothing but the mod's own record.
     on('tool.check', { tool: PROJECT_TOOL }, () => ({ decision: 'allow' }))
 
@@ -936,7 +956,13 @@ export const register: Register = (on, options) => {
           text: [
             `The city is written to ${path}`,
             fileUrl(path),
-            `Open it in a browser or a preview tab: it reloads itself every ${PAGE_REFRESH_SECONDS} seconds.`,
+            '',
+            'To keep it open in VS Code beside the terminal, once:',
+            '1. Open the Command Palette (Ctrl+Shift+P, or Cmd+Shift+P on a Mac).',
+            '2. Run "Open Integrated Browser".',
+            '3. Paste the file URL above into its address bar.',
+            '',
+            `Any browser opens it too. It reloads itself every ${PAGE_REFRESH_SECONDS} seconds, so leave the tab open.`,
           ].join('\n'),
         }
       } catch (error) {
@@ -1435,28 +1461,35 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     try {
       const before = await read($, usage)
-      const percent = e.context.percent ?? before.contextPercent
+      const tokens = e.context.tokens ?? before.contextTokens
+      const limit = zoneLimit(e.context.window, smartZone)
+      // One toast per climb past a level; falling below the caution re-arms them.
+      const level = zoneOf(tokens, limit)
+      const { announced, crossed } = zoneCrossing(before.zoneAnnounced, level)
       await update($, usage, value => ({
         ...value,
-        contextTokens: e.context.tokens ?? value.contextTokens,
+        contextTokens: tokens,
         contextWindow: e.context.window,
-        contextPercent: percent,
+        contextPercent: e.context.percent ?? value.contextPercent,
         rateLimits: e.rateLimits.map(limit => ({
           kind: limit.kind,
           percentUsed: limit.percentUsed,
           ...(limit.resetsAt === undefined ? {} : { resetsAt: limit.resetsAt }),
         })),
         costUsd: e.cost?.usd ?? value.costUsd,
-        hasWarnedContext: percent >= 80,
+        zoneLimit: limit,
+        zoneAnnounced: announced,
+        zoneOwed: zoneOwing(value.zoneOwed, level, crossed),
       }))
-      if (percent >= 80 && !before.hasWarnedContext) {
-        $.ui.toast(`The context window is ${percent}% full`)
+      if (crossed !== undefined) {
+        $.ui.toast(zoneToast(crossed, tokens, limit))
+        await note($, 'context', crossed === 'out' ? 'Out of the smart zone' : 'Smart-zone caution')
       }
       const known = await read($, limits)
-      if (e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)) {
-        await trackLimits($, (await read($, usage)).rateLimits)
-        await refresh($, false)
-      }
+      const hasLimits = e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)
+      if (hasLimits) await trackLimits($, (await read($, usage)).rateLimits)
+      // The status line carries the context reading, so it follows every move.
+      if (hasLimits || tokens !== before.contextTokens) await refresh($, false)
     } catch (error) {
       say($, 'session.measure', error)
     }

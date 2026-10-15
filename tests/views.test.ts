@@ -164,17 +164,14 @@ const VERIFIER = {
   fork: false,
 } as const
 
-test('a failing test command is told in the band, the overview, the text city and the /city answer', async ($, on) => {
+test('a failing test command is told in the overview, the text city and the /city answer, not the band', async ($, on) => {
   mock.clock(on)
   const here = world(on)
   on('tool.call', { tool: 'Bash' }, () => ({ result: 'Exit code 1\n3 tests failed', isError: true }) as never)
   await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test' })
 
   for (const surface of READ) {
-    for (const columns of [80, 110]) {
-      const mark = (await banded($, surface, columns)).find(one => one.text === 'tests ✘')
-      expect(mark?.props.color).toBe(C.fail)
-    }
+    expect(shown(await banded($, surface, 200)).some(one => one.includes('✘'))).toBe(false)
     const overview = await viewed($, surface, 'overview')
     expect(shown(overview)).toContain('CHECKS')
     const line = overview.find(one => one.text.startsWith('✘ tests'))
@@ -443,7 +440,7 @@ test('a limit on course to run out early is rose in Resources, warned of in the 
   expect(await answer($, here)).toMatch(/\nLimits: ⚠ 5h limit out in \d+m\n/)
 })
 
-test('git is told as a line in the overview and the /city answer, and in the band where it is wide', async ($, on) => {
+test('git is told as a line in the overview and the /city answer, and not in the band', async ($, on) => {
   const clock = mock.clock(on)
   const here = world(on)
   on('process.run', (_, e) => {
@@ -460,7 +457,7 @@ test('git is told as a line in the overview and the /city answer, and in the ban
   for (const surface of READ) {
     const overview = shown(await viewed($, surface, 'overview'))
     expect(overview.slice(overview.indexOf('GIT')).slice(0, 2)).toEqual(['GIT', 'main · 1 file +12 −3 · 1 untracked'])
-    expect(shown(await banded($, surface, 110))).toContain('main +12 −3')
+    expect(shown(await banded($, surface, 200)).some(one => one.includes('main'))).toBe(false)
   }
   expect(await answer($, here)).toContain('\nGit: main · 1 file +12 −3 · 1 untracked\n')
 })
@@ -470,7 +467,13 @@ test('git is told as a line in the overview and the /city answer, and in the ban
 const rowWidth = (texts: readonly FoundElement[]): number =>
   texts.reduce((sum, one) => sum + one.text.length + 1, 16)
 
-test('the band fits one row of eighty columns, leaving out the least important first', async ($, on) => {
+// The two surfaces that draw the band.
+const BANDED = ['terminal', 'desktop'] as const
+
+// A session with something in every strip element, and data for every
+// reading the band no longer carries: the project name, progress, an agent,
+// checks, the prompt's tokens, git and the current task.
+const everything = async ($: Engine, on: On): Promise<void> => {
   const clock = mock.clock(on)
   world(on)
   on('process.run', (_, e) => {
@@ -491,34 +494,201 @@ test('the band fits one row of eighty columns, leaving out the least important f
   await $.agent.spawn({ ...VERIFIER, subagentType: 'Explore', description: 'Find the callers' })
   await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test && npm run lint && npx tsc' })
   await $.classic.PermissionRequest({ tool_name: 'Write', tool_input: {} })
+  const resetsAt = new Date(clock.now() + 4 * 3_600_000).toISOString()
+  const measure = (percentUsed: number) =>
+    $.session.measure({
+      context: { window: 200_000, tokens: 151_000, percent: 76 },
+      rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt }],
+      changed: ['context', 'rateLimits'],
+    } as never)
+  await measure(40)
+  await clock.advance(12 * 60_000)
+  await measure(60)
+}
 
-  for (const surface of READ) {
-    const wide = await banded($, surface, 200)
-    expect(shown(wide)).toEqual([
+const LIMIT = /^⚠ 5h limit out in \d+m$/
+
+test('the band shows needs you, the limit warning, the smart zone and tasks done, then City and Hide', async ($, on) => {
+  await everything($, on)
+
+  for (const surface of BANDED) {
+    const ui = await $.ui.mount({ ...bandAt(200), surface })
+    expect(shown(await ui.findAll({ type: 'Text' }))).toEqual([
       '▲ needs you: permission for Write',
-      '◆ atlas',
-      '████',
-      '░░░░░░░░░░',
-      '25%',
+      expect.stringMatching(LIMIT),
+      'ctx 151k · out of the smart zone',
       '0/2 tasks',
-      '◎',
-      'tests ✘ · lint ✘ · types ✘',
-      expect.stringMatching(/^⚡\d/),
-      'ctx 10%',
-      'feature/text-views +120 −34',
-      'Write the text views',
     ])
-    const row = await banded($, surface, 80)
-    expect(rowWidth(row)).toBeLessThanOrEqual(80)
-    // The wait, the name, the tasks and the checks outlast the rest, the
-    // checks as one mark where there is no room for each.
-    expect(shown(row)).toEqual(['▲ needs you: permission for Write', '◆ atlas', '0/2 tasks', 'checks ✘'])
-    expect(shown(await banded($, surface, 100))).toContain('tests ✘ · lint ✘ · types ✘')
-    expect(shown(row)).not.toContain('feature/text-views +120 −34')
-    expect(shown(row)).not.toContain('Write the text views')
-    for (const columns of [60, 100, 120]) {
-      expect(rowWidth(await banded($, surface, columns))).toBeLessThanOrEqual(columns)
+    expect((await ui.findAll({ type: 'Button' })).map(one => one.key)).toEqual(['city', 'hide'])
+    await ui.unmount()
+  }
+})
+
+test('as the band narrows it drops tasks done, the smart-zone tail, the smart zone, then the limit warning', async ($, on) => {
+  await everything($, on)
+
+  for (const surface of BANDED) {
+    // Each distinct row the band shows, widest first.
+    const rows: string[][] = []
+    for (let columns = 200; columns >= 20; columns -= 1) {
+      const ui = await $.ui.mount({ ...bandAt(columns), surface })
+      const texts = await ui.findAll({ type: 'Text' })
+      const row = shown(texts).map(one => (LIMIT.test(one) ? '⚠ limit' : one))
+      if (row.length > 1) expect(rowWidth(texts)).toBeLessThanOrEqual(columns)
+      expect((await ui.findAll({ type: 'Button' })).map(one => one.key)).toEqual(['city', 'hide'])
+      // One row: the band never wraps onto a second.
+      expect((await ui.find({ type: 'Box' }))?.props.flexWrap ?? 'nowrap').toBe('nowrap')
+      await ui.unmount()
+      if (JSON.stringify(rows.at(-1)) !== JSON.stringify(row)) rows.push(row)
     }
+    const NEEDS = '▲ needs you: permission for Write'
+    expect(rows).toEqual([
+      [NEEDS, '⚠ limit', 'ctx 151k · out of the smart zone', '0/2 tasks'],
+      [NEEDS, '⚠ limit', 'ctx 151k · out of the smart zone'],
+      [NEEDS, '⚠ limit', 'ctx 151k'],
+      [NEEDS, '⚠ limit'],
+      [NEEDS],
+    ])
+  }
+})
+
+test('an element left alone on the band is dropped where it does not fit, not cut', async ($, on) => {
+  mock.clock(on)
+  world(on)
+  await $.tool.call({ tool: 'TaskCreate', tool_use_id: 't1', subject: 'One', description: '' })
+  await $.tool.call({ tool: 'TaskCreate', tool_use_id: 't2', subject: 'Two', description: '' })
+
+  for (const surface of BANDED) {
+    expect(shown(await banded($, surface, 80))).toEqual(['0/2 tasks'])
+    // Sixteen cells of buttons and ten of `0/2 tasks ` take twenty-six.
+    expect(await banded($, surface, 25)).toEqual([])
+  }
+})
+
+test('with nothing to say the band shows only City and Hide', async ($, on) => {
+  mock.clock(on)
+  world(on)
+  await $.session.measure({
+    context: { window: 200_000, tokens: 0, percent: 0 },
+    rateLimits: [],
+    changed: ['context'],
+  } as never)
+
+  for (const surface of BANDED) {
+    const ui = await $.ui.mount({ ...bandAt(80), surface })
+    expect(await ui.findAll({ type: 'Text' })).toEqual([])
+    expect((await ui.findAll({ type: 'Button' })).map(one => one.key)).toEqual(['city', 'hide'])
+    await ui.unmount()
+  }
+})
+
+test('the limit warning is on the band only while a limit is on course to run out', async ($, on) => {
+  const clock = mock.clock(on)
+  world(on)
+  const resetsAt = new Date(clock.now() + 4 * 3_600_000).toISOString()
+  const measure = (percentUsed: number) =>
+    $.session.measure({
+      context: { window: 200_000, tokens: 20_000, percent: 10 },
+      rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt }],
+      changed: ['rateLimits'],
+    } as never)
+  const warned = async (): Promise<boolean> =>
+    shown(await banded($, 'terminal', 200)).some(one => one.startsWith('⚠'))
+
+  await measure(10)
+  expect(await warned()).toBe(false)
+  // A slow pace that lasts until the reset is no warning.
+  await clock.advance(12 * 60_000)
+  await measure(11)
+  expect(await warned()).toBe(false)
+  await clock.advance(12 * 60_000)
+  await measure(40)
+  expect(await warned()).toBe(true)
+})
+
+// What the pane on City shows between its row of views and the drawing (the
+// vector city, or the text city under its heading), and the drawing's first
+// element.
+const cityStrip = async (
+  $: Engine,
+  surface: Surface,
+  columns: number,
+): Promise<{ strip: FoundElement[]; drawing: FoundElement | undefined }> => {
+  const ui = await $.ui.mount({ ...paneAt(columns), surface })
+  await ui.press({ key: 'view-city' })
+  const all = await ui.findAll({})
+  await ui.unmount()
+  const views = all.findLastIndex(one => one.type === 'Button' && one.key?.startsWith('view-') === true)
+  const drawn = all.findIndex(one => one.type === 'Svg' || (one.type === 'Text' && one.text === 'CITY'))
+
+  return {
+    strip: all.slice(views + 1, drawn).filter(one => one.type === 'Text'),
+    drawing: all[drawn],
+  }
+}
+
+// The pane on City in each renderer: the vector city on the desktop, wide and
+// narrow (its column layout), and the text city in the terminal.
+const CITIES = [
+  ['desktop', 100],
+  ['desktop', 30],
+  ['vscode', 100],
+  ['terminal', 100],
+  ['terminal', 30],
+] as const
+
+test('City opens with the band’s strip above the drawing, whole however narrow the pane', async ($, on) => {
+  await everything($, on)
+  const band = shown(await banded($, 'terminal', 200))
+  expect(band).toHaveLength(4)
+
+  for (const [surface, columns] of CITIES) {
+    const { strip, drawing } = await cityStrip($, surface, columns)
+    expect(shown(strip)).toEqual(band)
+    expect(drawing?.type).toBe(surface === 'terminal' ? 'Text' : 'Svg')
+    // Needs you leads in rose, as on the band.
+    expect(strip[0]?.props.color).toBe(C.fail)
+  }
+})
+
+test('City’s strip shows the limit warning only while a limit is on course to run out', async ($, on) => {
+  const clock = mock.clock(on)
+  world(on)
+  const resetsAt = new Date(clock.now() + 4 * 3_600_000).toISOString()
+  const measure = (percentUsed: number) =>
+    $.session.measure({
+      context: { window: 200_000, tokens: 20_000, percent: 10 },
+      rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt }],
+      changed: ['rateLimits'],
+    } as never)
+  const warned = async (surface: Surface): Promise<boolean> =>
+    shown((await cityStrip($, surface, 100)).strip).some(one => one.startsWith('⚠'))
+
+  await measure(10)
+  await clock.advance(12 * 60_000)
+  await measure(11)
+  for (const surface of ['desktop', 'terminal'] as const) expect(await warned(surface)).toBe(false)
+  await clock.advance(12 * 60_000)
+  await measure(40)
+  for (const surface of ['desktop', 'terminal'] as const) {
+    expect(await warned(surface)).toBe(true)
+    expect(shown((await cityStrip($, surface, 100)).strip)).toEqual(shown(await banded($, 'terminal', 200)))
+  }
+})
+
+test('with every element empty City shows no strip', async ($, on) => {
+  mock.clock(on)
+  world(on)
+  await $.session.measure({
+    context: { window: 200_000, tokens: 0, percent: 0 },
+    rateLimits: [],
+    changed: ['context'],
+  } as never)
+
+  for (const [surface, columns] of CITIES) {
+    const { strip, drawing } = await cityStrip($, surface, columns)
+    expect(strip).toEqual([])
+    expect(drawing).toBeDefined()
   }
 })
 
