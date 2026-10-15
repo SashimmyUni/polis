@@ -6,7 +6,7 @@ The [user manual](docs/MANUAL.md) explains how to read every part of it.
 
 ## What it shows
 
-- **Band** — what needs you, project progress, tasks done, working agents, the checks that have run, a usage-limit warning, this prompt's tokens against its expected range, context window, git branch.
+- **Band** — only what to act on now, on one row: what needs you, a usage-limit warning while one fires, the smart zone (context in tokens) and tasks done.
 - **Pane** (`/city`, or the band's City button), with seven views:
   - **Overview** — what needs you, the project and this session, milestones, the current prompt's actual against expected, tasks and how the finished ones stand, checks, git, agents, background processes, recent activity, most-edited files.
   - **Project** — every session of the project, with the agents each ran and their sub-agents.

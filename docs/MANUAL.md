@@ -52,26 +52,20 @@ The path above is only an example: use the absolute path to your copy of the Pol
 
 ### The band above the prompt
 
-On the desktop app and in a terminal, Polis draws one band directly above the prompt. From left to right:
+On the desktop app and in a terminal, Polis draws one band directly above the prompt. It shows only what to act on now, from left to right:
 
 | Element | Meaning |
 | --- | --- |
-| `◆ atlas` | The project's name, cut to 18 characters. By default it is the folder name of the repository root (of the working directory outside a repository), or `Scratch` when the path runs through a `scratch-workspaces` folder. Claude can set it through the project tool. |
-| `▲ needs you: permission for Bash` | First on the row, bold rose, and the last thing to be left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan (see "What needs you"). |
-| `◆ atlas` | The project's name, cut to 18 characters. By default it is the folder name of the repository root (of the working directory outside a repository), or `Scratch` when the path runs through a `scratch-workspaces` folder. Claude can set it through the project tool. |
-| `███░░░ 50%` | Progress, shown once there is something to count. It counts the project's milestones if Claude has recorded any, otherwise the top-level tasks (those with no parent) on the board, which include unfinished ones an earlier session left. Each finished item counts one and each item in progress counts half. |
+| `▲ needs you: permission for Bash` | First on the row, bold rose, and never left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan (see "What needs you"). |
+| `⚠ 5h limit out in 1h20m` | Rose. Shown only while a usage limit is on course to run out before it resets, or as `⚠ 5h limit reached` once full (see "Usage limits"). Absent while every limit is fine. |
+| `ctx 122k` | The context the session holds, in tokens: grey inside the smart zone, amber from the smart-zone caution, and rose past the smart-zone limit, where it reads `ctx 151k · out of the smart zone`. Hidden while it reads 0. |
 | `2/5 tasks` | Tasks done out of all tasks on the board, sub-tasks included. Hidden while the board is empty. |
-| `⚒ ◎` | One glyph per working agent, up to six, colored by type: ◎ Explore, ▧ Plan, ⚒ worker, ✓ verifier, ● anything else. |
-| `tests ✔ · lint ✘` | The checks that have run, each with its mark: ✔ passed, ✘ failed, ◌ passed but stale. The color is the worst of them. In a narrow band it shortens to `checks ✘`. Absent until a check has run (see "Checks"). |
-| `⚠ 5h limit out in 1h20m` | Rose. A usage limit on course to run out before it resets, or `⚠ 5h limit reached` once full (see "Usage limits"). |
-| `⚡12k/90k` | Tokens this prompt has used so far, against the top of the range expected for it. Green while below the range, amber inside it, rose above it. It appears after your first prompt and keeps the last prompt's figure until the next one. The range comes from this project's past prompts of the same size once it has five of them, and from starting defaults before that. |
-| `ctx 38%` | How full the context window is. Grey, amber from 60%, rose from 80%. Hidden while it reads 0. |
-| `main +120 −34` | The git branch (cut to 18 characters) and the lines added and removed in the working tree against `HEAD`. Just the branch when nothing is changed. Absent outside a repository. |
-| Current task | The first task in progress, in its present-tense wording ("Running tests") if it has one, cut to 40 characters. Shown only when the band is at least 70 columns wide. |
 | **City** | Opens the pane at the City view. |
 | **Hide** | Hides the band. |
 
-The band wraps onto more lines when it is narrow. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, parts go in this order: the current task, the git mark, the bar, the agents, the tokens, the context, the percentage, the limit warning, the checks, the task count and the name. What needs you is never dropped before them.
+With nothing to show, the band holds just **City** and **Hide**. The project name, progress, agents, checks, this prompt's tokens, git and the current task are not on the band: the pane's views carry them.
+
+The band is always one row. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, elements go in this order: the task count, then the smart zone's `· out of the smart zone` tail, then the smart zone, then the limit warning. What needs you, **City** and **Hide** are never dropped.
 
 **Hide** removes the band for the rest of the session. Running `/city` brings it back (and opens the pane). While the band is hidden, and wherever no surface has asked for a band, Polis puts a short line in the status line under the prompt instead, for example `◆ tests ✔ · 2/5 tasks · 1 agent running`. It holds what needs you, a limit warning, the checks, the task count and the working agents, each only when it is not zero, and the line is cleared when there is nothing to say. A line that starts with what needs you has no `◆`. Whether a host shows that line is up to the host.
 
@@ -402,7 +396,7 @@ The city is drawn at night, and most of what moves in it is there for atmosphere
 
 | What you see | What it means |
 | --- | --- |
-| The moon | **Project progress.** It is a thin crescent at 0%, half lit at 50% and full at 100%, using the same percentage as the band. Hover it for the number. |
+| The moon | **Project progress.** It is a thin crescent at 0%, half lit at 50% and full at 100%, using the same percentage as the Overview. Hover it for the number. |
 | Fireworks over City Hall | **Every task on the board is done.** They stop as soon as a new task arrives. |
 
 The rest means nothing and is the same in every session:
@@ -540,7 +534,7 @@ ui         █ █ ✘ 3/3
 | `⚒` at the row's end | A running agent working on a task in this district, in the type's glyph and color (see the table above). |
 | `⚡ power` | The context window: a 10-cell bar and the percentage. |
 | `◈ works` and `✦ library` | Running background processes and skills used. |
-| `▣ checks:` | The checks that have run, as in the band, or `none run yet`. |
+| `▣ checks:` | The checks that have run, as in the status line, or `none run yet`. |
 | `▲ needs you:` or `◇ your turn` | What the main session waits on you for, and for how long; or that the turn is yours. Absent when neither applies. |
 | The last line | The key to the blocks above. Absent until a task is done. |
 
@@ -632,7 +626,7 @@ Running a check again replaces its earlier result. A change made through a shell
 
 | Place | What you see |
 | --- | --- |
-| Band and status line | `tests ✔ · lint ✘`, only the kinds that have run, in the order tests, lint, types, build. In a narrow band `checks ✘`. |
+| Status line | `tests ✔ · lint ✘`, only the kinds that have run, in the order tests, lint, types, build. |
 | Overview | A CHECKS section with a line each: `✘ tests   failed just now · 0ms · npm test`, or `◌ tests   stale: 2 edits since it passed 4m ago · npm test`. It shows the state, when, how long the run took, and the command (cut to 48 characters). Absent until a check has run. |
 | City | The signal mast beside the civic block, one lamp per kind. |
 | Text city and `/city` answer | `▣ checks: tests ✔ · lint ✘` (`none run yet` before any), and a `Checks:` line. |
@@ -661,7 +655,7 @@ The line reads `main ↑1 ↓2 · 5 files +120 −34 · 2 untracked`:
 - the files git does not track yet;
 - `clean` when there is nothing to report.
 
-A repository with no commit yet has no `HEAD`: the files are counted but no lines are. The Overview shows the line as the note of a GIT heading, the `/city` answer as `Git:`, the band shortens it to `main +120 −34`, and the session report puts the branch and the change in its header.
+A repository with no commit yet has no `HEAD`: the files are counted but no lines are. The Overview shows the line as the note of a GIT heading, the `/city` answer as `Git:`, and the session report puts the branch and the change in its header.
 
 ### Verified and done
 
@@ -915,4 +909,4 @@ A turn is added to this project's history when the main session finishes it with
 | Every finished task reads "verified by tests", or none does | A passing test run verifies every finished task that nobody has judged, and a task finished after that run waits for the next one. | Run the tests again, or have `polis:verifier` check the task (see "Verified and done"). |
 | The layout looks wrong in one place | The numbers each surface gave Polis. | Open the store file, below. |
 
-**Where the layout numbers are kept.** Polis writes them to the store file whose name starts with `polis` in `~/.claude/plugins/store/` (on Windows, `C:\Users\<you>\.claude\plugins\store\`), under the key `rooms`. Each surface has a `desktop:pane` and `desktop:band` style entry (`terminal:`, `mobile:` and so on) holding `bodyColumns`, `bodyRows` or `maxRows`, `placement` and `viewport` as JSON text. A `bodyColumns` under 44 explains the narrow layout; the band drops the current task's name below 70. An entry is written within about five seconds of changing.
+**Where the layout numbers are kept.** Polis writes them to the store file whose name starts with `polis` in `~/.claude/plugins/store/` (on Windows, `C:\Users\<you>\.claude\plugins\store\`), under the key `rooms`. Each surface has a `desktop:pane` and `desktop:band` style entry (`terminal:`, `mobile:` and so on) holding `bodyColumns`, `bodyRows` or `maxRows`, `placement` and `viewport` as JSON text. A `bodyColumns` under 44 explains the narrow layout. An entry is written within about five seconds of changing.
