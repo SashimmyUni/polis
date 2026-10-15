@@ -68,7 +68,7 @@ import type { EstimateMode, SavedTasks } from './logic'
 import { EMPTY_ARCHIVE, asArchive, offBoard, syncArchive } from './archive'
 import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
 import { REPORT_FILE, reportOf } from './report'
-import { PAGE_REFRESH_SECONDS, cityPage } from './page'
+import { PAGE_FILES, PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
 import { band, pane, stripElements, summary } from './views'
@@ -624,36 +624,44 @@ const load = async (
   }
 }
 
-// The page on disk: what was last written and where, and whether a failure
-// to write it has been said already.
-let written = { path: '', text: '' }
+// The pages on disk: what was last written to each, and whether a failure
+// to write them has been said already.
+let written = new Map<string, string>()
 let hasSaidPage = false
 
-// Writes the city where a browser left open finds it, and only when the
-// picture changed: an idle session writes nothing. Asked for outright (a
-// session starting, `/city page`), it writes whatever stands there, so a
-// file since deleted comes back.
+// Writes the two cities, current and full, where a browser left open finds
+// them, each only when its picture changed: an idle session writes nothing.
+// Asked for outright (a session starting, `/city page`), it writes whatever
+// stands there, so a file since deleted comes back.
 const writePage = async (
   $: EngineInterface,
   session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
   root: string,
   isAsked: boolean,
-): Promise<string> => {
+): Promise<{ current: string; full: string }> => {
   const model = await load($, session, 80)
   const name =
     model.project !== null && model.project.name !== '' ? model.project.name : projectName(root)
-  const text = cityPage(model, name)
-  const path = under(root, '.polis', 'city.html')
-  if (!isAsked && written.path === path && written.text === text) return path
+  const paths = {
+    current: under(root, '.polis', PAGE_FILES.current),
+    full: under(root, '.polis', PAGE_FILES.full),
+  }
+  const texts = [
+    [paths.current, cityPage(model, name)],
+    [paths.full, cityPage({ ...model, archive: model.archived ?? EMPTY_ARCHIVE }, name)],
+  ] as const
   // The folder keeps itself out of `git status`.
   const ignore = under(root, '.polis', '.gitignore')
-  if ((isAsked || written.path !== path) && !(await $.fs.exists(ignore))) {
+  if ((isAsked || !written.has(paths.current)) && !(await $.fs.exists(ignore))) {
     await $.fs.write(ignore, '*\n')
   }
-  await $.fs.write(path, text)
-  written = { path, text }
+  for (const [path, text] of texts) {
+    if (!isAsked && written.get(path) === text) continue
+    await $.fs.write(path, text)
+    written.set(path, text)
+  }
 
-  return path
+  return paths
 }
 
 // The mod's own write, at the start and on its timer: a folder that cannot
@@ -978,12 +986,17 @@ export const register: Register = (on, options) => {
       }
       try {
         const root = pageRoot ?? (await read($, project))?.root ?? (await $.session.cwd())
-        const path = await writePage($, session(), root, true)
+        const paths = await writePage($, session(), root, true)
 
         return {
           text: [
-            `The city is written to ${path}`,
-            fileUrl(path),
+            `The city is written to ${paths.current}`,
+            fileUrl(paths.current),
+            '',
+            `The full city, with everything the project has finished, is written to ${paths.full}`,
+            fileUrl(paths.full),
+            '',
+            'Each page links to the other in its header.',
             '',
             'To keep it open in VS Code beside the terminal, once:',
             '1. Open the Command Palette (Ctrl+Shift+P, or Cmd+Shift+P on a Mac).',
