@@ -31,7 +31,7 @@ The [user manual](docs/MANUAL.md) explains how to read every part of it.
 | --- | --- |
 | Claude desktop app, Code tab | Everything, with the city and agent icons as vector drawings. |
 | `claude` in a terminal, including VS Code's integrated terminal | Everything as text; the city is a row of blocks per district. |
-| VS Code extension's chat panel | Nothing is drawn there (as of extension 2.1.295). The mod's hooks still run; the status line and the text answers of `/city`, `/city project` and `/city report` are what you get, and the mod asks nothing extra of the model. |
+| VS Code extension's chat panel | The pane, with City's top strip and the city as drawings, but no band; the status line stands in for it. |
 
 The pane adapts to its size. The city is cropped to what is built and drawn to the pane's shape, in one of three layouts (wide, avenue, or a one-block-wide column under 44 columns), with its key written on the buildings. Under 44 columns bars sit under their labels.
 

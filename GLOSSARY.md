@@ -64,3 +64,7 @@ _Avoid_: archive district, history block
 **City page**:
 The city drawn as a page that reloads itself, for a browser tab or a VS Code tab left open beside the session; read-only.
 _Avoid_: page on disk, dashboard
+
+**Strip**:
+The one ordered list of what to act on now (needs you, a limit warning while it fires, the smart zone, tasks done) that the band, City's top strip and the status line all render. Each item is a **strip element**.
+_Avoid_: band parts, status parts, header line
