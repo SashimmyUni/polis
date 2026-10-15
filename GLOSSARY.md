@@ -26,8 +26,16 @@ _Avoid_: soft limit
 A session whose context has passed the smart-zone limit.
 _Avoid_: dumb mode, dumb zone
 
+**Phase**:
+The step of the flow the work is at, such as grilling, writing the spec, cutting tickets, implementing or reviewing; read from what the session has done, not declared.
+_Avoid_: stage, process state, status (for this meaning)
+
 **Phase boundary**:
-The gap between two chunks of work in a session, such as grilling and implementing: the only place to clear, compact or hand off.
+The gap between two phases in a session, such as grilling and implementing: the only place to clear, compact or hand off.
+
+**Next step**:
+The skill or move the flow calls for after the current phase, such as `/to-tickets` after a spec, or `/clear` before an `/implement`.
+_Avoid_: suggested skills, recommendations
 
 ### Work
 
