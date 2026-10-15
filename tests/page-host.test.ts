@@ -144,6 +144,10 @@ test('/city page answers with the path and its file URL, and opens no pane', asy
 
   expect(ran.text).toContain(PAGE)
   expect(ran.text).toContain('file:///work/atlas/.polis/city.html')
+  // The steps to keep it open in VS Code's Integrated Browser.
+  expect(ran.text).toContain('Command Palette')
+  expect(ran.text).toContain('"Open Integrated Browser"')
+  expect(ran.text).toContain('Paste the file URL')
   expect(world.files.get(PAGE)).toContain('<meta http-equiv="refresh"')
   expect(world.opened).toEqual([])
 })

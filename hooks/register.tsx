@@ -967,7 +967,13 @@ export const register: Register = (on, options) => {
           text: [
             `The city is written to ${path}`,
             fileUrl(path),
-            `Open it in a browser or a preview tab: it reloads itself every ${PAGE_REFRESH_SECONDS} seconds.`,
+            '',
+            'To keep it open in VS Code beside the terminal, once:',
+            '1. Open the Command Palette (Ctrl+Shift+P, or Cmd+Shift+P on a Mac).',
+            '2. Run "Open Integrated Browser".',
+            '3. Paste the file URL above into its address bar.',
+            '',
+            `Any browser opens it too. It reloads itself every ${PAGE_REFRESH_SECONDS} seconds, so leave the tab open.`,
           ].join('\n'),
         }
       } catch (error) {
