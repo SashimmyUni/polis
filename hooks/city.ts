@@ -1,4 +1,4 @@
-import type { AgentRun, Check, Proc, Project, Skills, Task, Turn, Usage, Wait } from '../types'
+import type { AgentRun, Archive, ArchiveEntry, Check, Proc, Project, Skills, Task, Turn, Usage, Wait } from '../types'
 import { CHECK_KINDS, CHECK_LABEL, stateOf } from './checks'
 import { avatar, esc, mix, n } from './icons'
 import {
@@ -34,6 +34,8 @@ export type CityInput = {
   waits?: Wait[]
   /** Drawn without any motion, with what only moved into view left out or fixed. */
   isStill?: boolean
+  /** The full city: the archive's finished work not on the board, drawn beside it. */
+  archive?: Archive
 }
 
 // The city is laid out on a square grid and drawn in a 2:1 isometric view:
@@ -279,6 +281,38 @@ const building = (task: Task, lot: Lot, blocked: boolean, hasDetail: boolean, is
     `<g>${title}${prism(gx, gy, size, size, height, body)}` +
     (hasDetail ? windows(lot, glass, standing === 'unchecked' ? -1 : seed, isStill) + rooftop(lot, seed, body, isStill) : '') +
     (standing === 'verified' || standing === 'refuted' ? verdictMark(lot, standing) : '') +
+    `</g>`
+  )
+}
+
+// Archived work: a finished building drawn quieter, with barely lit windows
+// and nothing on its roof, so that this week's work still stands out.
+const ARCHIVED = mix(mix(C.done, C.tile, 0.55), C.muted, 0.55)
+
+const archivedBuilding = (entry: ArchiveEntry, lot: Lot, hasDetail: boolean): string =>
+  `<g><title>${esc(`${clip(entry.subject, 80)} · archived · ${entry.area}`)}</title>` +
+  prism(lot.gx, lot.gy, lot.size, lot.size, lot.height, ARCHIVED) +
+  (hasDetail ? windows(lot, mix(C.run, C.tile, 0.85)) : '') +
+  `</g>`
+
+// A district's oldest work: three towers on one lot, taller the more they
+// stand for.
+const oldTown = (lot: Lot, count: number, area: string): string => {
+  const grown = Math.min(1, Math.log10(count + 1) / 4)
+  const towers = [
+    [0.05, 0.05, 0.5, 1],
+    [0.5, 0.1, 0.4, 0.7],
+    [0.1, 0.55, 0.38, 0.55],
+  ] as const
+  const body = mix(ARCHIVED, C.bg, 0.25)
+
+  return (
+    `<g><title>${esc(`Old town: ${count.toLocaleString('en-US')} done in ${area}`)}</title>` +
+    towers
+      .map(([dx, dy, side, share]) =>
+        prism(lot.gx + lot.size * dx, lot.gy + lot.size * dy, lot.size * side, lot.size * side, (10 + 46 * grown) * share, body),
+      )
+      .join('') +
     `</g>`
   )
 }
@@ -691,15 +725,17 @@ const fireworks = (isColumn: boolean, isStill: boolean): string =>
 // A district's lots: as few and as large as its tasks allow, with a tree or
 // two where a lot is left over.
 const lotsOf = (
-  district: District,
+  district: Quarter,
   slot: Slot,
   all: readonly Task[],
   isStill: boolean,
-): { lots: Map<string, Lot>; trees: Drawable[] } => {
+): { lots: Map<string, Lot>; archived: Lot[]; town: Lot | undefined; trees: Drawable[] } => {
   const bx = slot[0] * PITCH
   const by = slot[1] * PITCH
   const shown = district.tasks.slice(0, 16)
-  const side = shown.length <= 1 ? 1 : shown.length <= 4 ? 2 : shown.length <= 9 ? 3 : 4
+  // The board's work in front, the archive's behind it, the old town last.
+  const taken = shown.length + district.archived.length + (district.oldTown > 0 ? 1 : 0)
+  const side = Math.max(1, Math.ceil(Math.sqrt(taken)))
   const cell = (BLOCK - 0.6) / side
   // Lots fill from the front corner back, which keeps the back corner, under
   // the name of the block behind, free for longest.
@@ -720,13 +756,53 @@ const lotsOf = (
     const [gx, gy] = corner(index, size)
     lots.set(task.id, { gx, gy, size, height: isSub ? tall * 0.7 : tall })
   })
+  const size = Math.min(1.25, cell * 0.64)
+  const archived = district.archived.map((entry, k): Lot => {
+    const [gx, gy] = corner(shown.length + k, size)
+
+    return { gx, gy, size, height: (12 + (hash(entry.id) % 8)) * Math.min(1.5, Math.max(1, size / 0.8)) }
+  })
+  const townSize = Math.min(1.6, cell * 0.86)
+  const [tx, ty] = corner(taken - 1, townSize)
+  const town = district.oldTown > 0 ? { gx: tx, gy: ty, size: townSize, height: 0 } : undefined
   const trees: Drawable[] = []
-  for (let index = side * side - 1; index >= shown.length && trees.length < 2; index -= 1) {
+  for (let index = side * side - 1; index >= taken && trees.length < 2; index -= 1) {
     const [gx, gy] = corner(index, 0)
     trees.push(tree(gx, gy, 3 + (index % 2), isStill))
   }
 
-  return { lots, trees }
+  return { lots, archived, town, trees }
+}
+
+// A district as the drawing has it: the board's tasks, and in the full city
+// the archive's newest finished work not on the board and how many older
+// tasks its old town stands for.
+type Quarter = District & { archived: ArchiveEntry[]; oldTown: number }
+
+// How many archived buildings a district shows before the rest go to its old town.
+const ARCHIVE_CAP = 24
+
+// The districts to draw: the board's in the order their first task
+// appeared, then those only the archive knows, newest first.
+const quartersOf = (m: CityInput, cap = ARCHIVE_CAP): Quarter[] => {
+  const quarters: Quarter[] = districtsOf(m.tasks).map(district => ({ ...district, archived: [], oldTown: 0 }))
+  if (m.archive === undefined) return quarters
+  const find = (area: string): Quarter => {
+    const found = quarters.find(one => one.area === area)
+    if (found !== undefined) return found
+    const made: Quarter = { area, tasks: [], archived: [], oldTown: 0 }
+    quarters.push(made)
+
+    return made
+  }
+  for (const entry of [...m.archive.entries].sort((a, b) => b.doneAt - a.doneAt)) {
+    const quarter = find(entry.area)
+    if (quarter.archived.length < cap) quarter.archived.push(entry)
+    else quarter.oldTown += 1
+  }
+  for (const [area, count] of Object.entries(m.archive.folded)) find(area).oldTown += count
+
+  return quarters
 }
 
 // The box a layout's drawing takes with this many districts, cropped to what
@@ -753,7 +829,7 @@ const extentOf = (
 // The layout that draws this city largest in a room of this shape (width
 // over height). On a tie the wider layout stands.
 export const layoutFor = (m: CityInput, aspect: number): CityLayout => {
-  const count = districtsOf(m.tasks).length
+  const count = quartersOf(m).length
   let best: CityLayout = 'wide'
   let most = 0
   for (const layout of ['wide', 'avenue', 'column'] as const) {
@@ -830,7 +906,7 @@ const signalMast = (checks: readonly Check[]): string => {
   )
 }
 
-const draw = (m: CityInput, shed: Shed, layout: CityLayout, aspect?: number): string => {
+const draw = (m: CityInput, shed: Shed, layout: CityLayout, aspect?: number, cap = ARCHIVE_CAP): string => {
   const hasDetail = shed < 1
   const hasAmbience = shed < 2
   const isStill = m.isStill === true
@@ -839,7 +915,7 @@ const draw = (m: CityInput, shed: Shed, layout: CityLayout, aspect?: number): st
   // its buildings, so they stay readable once the surface scales it down.
   const type = isColumn ? 1.2 : 1
   const slots = slotsOf(layout)
-  const districts = districtsOf(m.tasks).slice(0, slots.length)
+  const districts = quartersOf(m, cap).slice(0, slots.length)
   const used: Slot[] = [[0, 0], ...districts.map((_, index) => slots[index] ?? ([0, 0] as const))]
   const isUsed = (i: number, j: number): boolean => used.some(slot => slot[0] === i && slot[1] === j)
 
@@ -885,8 +961,13 @@ const draw = (m: CityInput, shed: Shed, layout: CityLayout, aspect?: number): st
     const slot = slots[index] ?? ([0, 0] as const)
     const bx = slot[0] * PITCH
     const by = slot[1] * PITCH
-    const { lots, trees } = lotsOf(district, slot, m.tasks, isStill)
+    const { lots, archived, town, trees } = lotsOf(district, slot, m.tasks, isStill)
     things.push(...trees)
+    district.archived.forEach((entry, k) => {
+      const lot = archived[k]
+      if (lot !== undefined) things.push({ depth: depthOf(lot), svg: archivedBuilding(entry, lot, hasDetail) })
+    })
+    if (town !== undefined) things.push({ depth: depthOf(town), svg: oldTown(town, district.oldTown, district.area) })
     for (const task of district.tasks) {
       const lot = lots.get(task.id)
       if (lot === undefined) continue
@@ -904,7 +985,10 @@ const draw = (m: CityInput, shed: Shed, layout: CityLayout, aspect?: number): st
     labels.push(
       label(x, y, `${clip(district.area, 10).toUpperCase()}  ${stats.done}/${stats.total}${hidden > 0 ? ` +${hidden}` : ''}`, { size: 8.5 * type, fill: C.text, hasPill: true }) +
         `<rect x="${n(x - 18)}" y="${n(y + 4.5)}" width="36" height="2.4" rx="1.2" fill="${C.faint}"/>` +
-        `<rect x="${n(x - 18)}" y="${n(y + 4.5)}" width="${n(stats.total === 0 ? 0 : (36 * stats.done) / stats.total)}" height="2.4" rx="1.2" fill="${C.done}"/>`,
+        `<rect x="${n(x - 18)}" y="${n(y + 4.5)}" width="${n(stats.total === 0 ? 0 : (36 * stats.done) / stats.total)}" height="2.4" rx="1.2" fill="${C.done}"/>` +
+        (district.oldTown > 0
+          ? label(x, y + 16 * type, `old town · ${district.oldTown.toLocaleString('en-US')} done`, { size: 7 * type, hasPill: true })
+          : ''),
     )
   })
 
@@ -1155,18 +1239,31 @@ const untitled = (svg: string): string => svg.replace(/<title>[^<]*<\/title>/g, 
 // A city too large for the surface's limit is drawn again with less: first
 // without the detail on its buildings, then without the night and the street
 // life either, and last without its tooltips.
+const fitWith = (m: CityInput, layout: CityLayout, aspect: number | undefined, cap: number): { svg: string; shed: Shed } => {
+  const full = draw(m, 0, layout, aspect, cap)
+  if (full.length <= 120_000) return { svg: full, shed: 0 }
+  const plain = draw(m, 1, layout, aspect, cap)
+  if (plain.length < LIMIT) return { svg: plain, shed: 1 }
+  const bare = draw(m, 2, layout, aspect, cap)
+
+  return bare.length < LIMIT ? { svg: bare, shed: 2 } : { svg: untitled(bare), shed: 3 }
+}
+
+// The full city sheds the same way, and where that is not enough each
+// district shows fewer archived buildings, the rest joining its old town.
 export const fitCity = (
   m: CityInput,
   layout: CityLayout = 'avenue',
   aspect?: number,
 ): { svg: string; shed: Shed } => {
-  const full = draw(m, 0, layout, aspect)
-  if (full.length <= 120_000) return { svg: full, shed: 0 }
-  const plain = draw(m, 1, layout, aspect)
-  if (plain.length < LIMIT) return { svg: plain, shed: 1 }
-  const bare = draw(m, 2, layout, aspect)
+  let fitted = fitWith(m, layout, aspect, ARCHIVE_CAP)
+  if (m.archive === undefined) return fitted
+  for (const cap of [12, 6, 0]) {
+    if (fitted.svg.length < LIMIT) break
+    fitted = fitWith(m, layout, aspect, cap)
+  }
 
-  return bare.length < LIMIT ? { svg: bare, shed: 2 } : { svg: untitled(bare), shed: 3 }
+  return fitted
 }
 
 // `aspect` is the shape of the room the drawing goes into, width over
