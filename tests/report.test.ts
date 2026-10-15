@@ -20,6 +20,7 @@ const USAGE: Usage = {
   mainFamilies: {},
   zoneLimit: 150_000,
   zoneAnnounced: 'inside',
+  zoneOwed: 'inside',
 }
 
 const task = (

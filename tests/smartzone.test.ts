@@ -172,3 +172,94 @@ test('a custom smart-zone limit moves both levels', { options: { smartZone: 300_
   expect(here.toasts).toHaveLength(1)
   expect(here.toasts[0]).toStartWith('Smart-zone caution: context 241k of 300k.')
 })
+
+// What Claude reads beside each prompt the person sends, in order.
+const prompted = (on: On): (readonly string[])[] => {
+  const seen: (readonly string[])[] = []
+  on('prompt.submit', (_, e) => {
+    seen.push(e.context ?? [])
+
+    return { text: e.text, ...(e.context === undefined ? {} : { context: e.context }) }
+  })
+
+  return seen
+}
+
+const send = ($: Engine, text = 'go on') => $.prompt.submit({ text, wait: false, origin: { kind: 'composer' } })
+
+const COMPOSE = {
+  model: 'claude',
+  promptModel: 'claude',
+  surfaces: ['terminal'],
+  tools: [],
+  outputStyle: null,
+  traits: [],
+} as const
+
+test('Claude is told of each crossing once, after the next prompt, and never in the system prompt', async ($, on) => {
+  world(on)
+  const seen = prompted(on)
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'Hello.', scope: 'shared' }] }))
+  await $.session.start(START)
+
+  await measure($, 100_000)
+  await send($)
+  expect(seen.at(-1)).toEqual([])
+
+  await measure($, 125_000)
+  await send($)
+  expect(seen.at(-1)).toHaveLength(1)
+  expect(seen.at(-1)?.[0]).toStartWith("Polis: this session's context is 125k, past the smart-zone caution (120k of a 150k limit).")
+  expect(seen.at(-1)?.[0]).toContain('sub-agents')
+  // Told once: the next prompt carries nothing.
+  await send($)
+  expect(seen.at(-1)).toEqual([])
+
+  await measure($, 152_000)
+  await send($)
+  const note = seen.at(-1)?.[0] ?? ''
+  expect(note).toContain('past the smart-zone limit of 150k')
+  expect(note).toContain('/clear, after writing down what the next phase needs')
+  expect(note).toContain('/compact when it does')
+  expect(note).toContain('Never carry on past this point without saying so.')
+
+  const composed = await $.prompt.compose(COMPOSE)
+  expect(composed.sections.map(section => section.text).join(' ')).not.toContain('smart-zone')
+})
+
+test('two crossings before the next prompt are told as the higher one', async ($, on) => {
+  world(on)
+  const seen = prompted(on)
+  await $.session.start(START)
+
+  await measure($, 125_000)
+  await measure($, 155_000)
+  await send($)
+  expect(seen.at(-1)).toHaveLength(1)
+  expect(seen.at(-1)?.[0]).toContain('past the smart-zone limit')
+  await send($)
+  expect(seen.at(-1)).toEqual([])
+})
+
+test('a crossing undone by a compact before the next prompt is not told', async ($, on) => {
+  world(on)
+  const seen = prompted(on)
+  await $.session.start(START)
+
+  await measure($, 125_000)
+  await measure($, 30_000)
+  await send($)
+  expect(seen.at(-1)).toEqual([])
+})
+
+test('with guidance off Claude is told nothing, and the person is still warned', { options: { guidance: false } }, async ($, on) => {
+  const here = world(on)
+  const seen = prompted(on)
+  await $.session.start(START)
+
+  await measure($, 155_000)
+  await send($)
+  expect(seen.at(-1)).toEqual([])
+  expect(here.toasts).toHaveLength(1)
+  expect((await reading($))?.text).toBe('ctx 155k · out of the smart zone')
+})

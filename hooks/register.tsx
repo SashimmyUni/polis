@@ -63,7 +63,9 @@ import {
   waitMark,
   zoneCrossing,
   zoneLimit,
+  zoneNote,
   zoneOf,
+  zoneOwing,
   zoneToast,
 } from './logic'
 import type { EstimateMode, SavedTasks } from './logic'
@@ -110,6 +112,7 @@ const UNMEASURED: Usage = {
   mainFamilies: {},
   zoneLimit: SMART_ZONE,
   zoneAnnounced: 'inside',
+  zoneOwed: 'inside',
 }
 
 const tasks = atom({ plugin: 'polis', key: 'tasks' } as const, [])
@@ -850,6 +853,24 @@ export const register: Register = (on, options) => {
       return { sections: [...composed.sections, GUIDANCE] }
     })
 
+    // A smart-zone crossing reaches Claude once, beside the person's next
+    // prompt: never through the system prompt (ADR 0001).
+    on('prompt.submit', async ($, e, next) => {
+      try {
+        const measured = await read($, usage)
+        if (measured.zoneOwed !== 'inside') {
+          const text = zoneNote(measured.zoneOwed, measured.contextTokens, measured.zoneLimit)
+          await update($, usage, value => ({ ...value, zoneOwed: 'inside' as const }))
+
+          return next({ ...e, context: [...(e.context ?? []), text] })
+        }
+      } catch (error) {
+        say($, 'prompt.submit', error)
+      }
+
+      return next(e)
+    })
+
     // The mod's own tool writes nothing but the mod's own record.
     on('tool.check', { tool: PROJECT_TOOL }, () => ({ decision: 'allow' }))
 
@@ -1447,7 +1468,8 @@ export const register: Register = (on, options) => {
       const tokens = e.context.tokens ?? before.contextTokens
       const limit = zoneLimit(e.context.window, smartZone)
       // One toast per climb past a level; falling below the caution re-arms them.
-      const { announced, crossed } = zoneCrossing(before.zoneAnnounced, zoneOf(tokens, limit))
+      const level = zoneOf(tokens, limit)
+      const { announced, crossed } = zoneCrossing(before.zoneAnnounced, level)
       await update($, usage, value => ({
         ...value,
         contextTokens: tokens,
@@ -1461,6 +1483,7 @@ export const register: Register = (on, options) => {
         costUsd: e.cost?.usd ?? value.costUsd,
         zoneLimit: limit,
         zoneAnnounced: announced,
+        zoneOwed: zoneOwing(value.zoneOwed, level, crossed),
       }))
       if (crossed !== undefined) {
         $.ui.toast(zoneToast(crossed, tokens, limit))

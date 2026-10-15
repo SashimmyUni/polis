@@ -200,6 +200,8 @@ export type Usage = {
   zoneLimit: number
   /** The highest smart-zone level announced since context last fell below the caution. */
   zoneAnnounced: ZoneLevel
+  /** The highest crossing Claude has not yet been told of; 'inside' when none is owed. */
+  zoneOwed: ZoneLevel
 }
 
 export type WaitKind = 'permission' | 'question' | 'plan' | 'input' | 'turn'

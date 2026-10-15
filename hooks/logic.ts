@@ -851,6 +851,34 @@ export const zoneCrossing = (
   return ZONE_RANK[level] > ZONE_RANK[announced] ? { announced: level, crossed: level } : { announced }
 }
 
+// The crossing owed to Claude after a reading: the higher of what was owed
+// and what was just crossed, nothing once context is back inside.
+export const zoneOwing = (owed: ZoneLevel, level: ZoneLevel, crossed: ZoneLevel | undefined): ZoneLevel => {
+  if (level === 'inside') return 'inside'
+  if (crossed === undefined) return owed
+
+  return ZONE_RANK[crossed] > ZONE_RANK[owed] ? crossed : owed
+}
+
+// What Claude reads after the person's next prompt, once per crossing: never
+// in the system prompt, whose cache a long session cannot afford to lose.
+export const zoneNote = (level: ZoneLevel, tokens: number, limit: number): string =>
+  level === 'out'
+    ? [
+        `Polis: this session's context is ${compact(tokens)}, past the smart-zone limit of ${compact(limit)}, beyond which reasoning is no longer at its sharpest.`,
+        'Stop at the next phase boundary (the gap between two chunks of work, such as grilling and implementing) and recommend the person clears or compacts:',
+        'recommend /clear, after writing down what the next phase needs, when the next phase does not depend on this conversation;',
+        'recommend /compact when it does and losing some detail will not hurt the work.',
+        'Until then, hand independent remaining pieces to sub-agents, which start with fresh context.',
+        'Never carry on past this point without saying so.',
+      ].join(' ')
+    : [
+        `Polis: this session's context is ${compact(tokens)}, past the smart-zone caution (${compact(zoneCaution(limit))} of a ${compact(limit)} limit).`,
+        'Plan how this work will stop while there is still room:',
+        'hand independent remaining pieces to sub-agents, which start with fresh context,',
+        'or aim to stop at the next phase boundary.',
+      ].join(' ')
+
 // The toast for a crossing, saying what to do about it.
 export const zoneToast = (level: ZoneLevel, tokens: number, limit: number): string =>
   level === 'out'

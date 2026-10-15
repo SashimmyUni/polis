@@ -70,6 +70,7 @@ export const base: CityInput = {
     mainFamilies: {},
     zoneLimit: 150_000,
     zoneAnnounced: 'inside',
+    zoneOwed: 'inside',
   },
   project: null,
   skills: { available: [], used: {}, suggested: [] },
