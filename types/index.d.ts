@@ -124,6 +124,20 @@ export type SessionRecord = {
   agents: AgentNode[]
 }
 
+/** One finished task as the project's archive keeps it. */
+export type ArchiveEntry = {
+  /** The id a later session carries it as: an earlier session's mark, a slash, its own id. */
+  id: string
+  subject: string
+  area: string
+  verdict?: 'passed' | 'failed'
+  doneAt: number
+  sessionId: string
+}
+
+/** Every task the project has finished: the newest in full, the rest as counts per district. */
+export type Archive = { entries: ArchiveEntry[]; folded: { [area: string]: number } }
+
 /** Every session of the project, as the store keeps them. */
 export type ProjectLog = { root: string; sessions: SessionRecord[] }
 
@@ -295,6 +309,7 @@ declare module 'claude-code' {
       checks: Check[]
       git: GitState | null
       log: ProjectLog | null
+      archive: Archive | null
       tick: number
     }
   }

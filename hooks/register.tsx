@@ -65,6 +65,7 @@ import {
   zoneToast,
 } from './logic'
 import type { EstimateMode, SavedTasks } from './logic'
+import { asArchive, syncArchive } from './archive'
 import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
 import { REPORT_FILE, reportOf } from './report'
 import { PAGE_REFRESH_SECONDS, cityPage } from './page'
@@ -135,6 +136,7 @@ const limits = atom({ plugin: 'polis', key: 'limits' } as const, [])
 const checks = atom({ plugin: 'polis', key: 'checks' } as const, [])
 const git = atom({ plugin: 'polis', key: 'git' } as const, null)
 const log = atom({ plugin: 'polis', key: 'log' } as const, null)
+const archive = atom({ plugin: 'polis', key: 'archive' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
 
 const GUIDANCE = {
@@ -430,6 +432,17 @@ const readGit = async ($: EngineInterface, root: string): Promise<void> => {
   }
 }
 
+// The project's archive brought in line with the board. The stored archive
+// is read again just before, so that a parallel session's work is not lost.
+const saveArchive = async ($: EngineInterface, here: Here, board: readonly Task[]): Promise<void> => {
+  if (here.root === '' || here.id === '') return
+  const key = `archive:${here.root}`
+  const stored = asArchive(await $.store.get(key))
+  const next = syncArchive(stored, board, here.id)
+  await update($, archive, () => next)
+  if (next !== stored) await $.store.set(key, next)
+}
+
 // The board as the sessions that follow will find it.
 const saveTasks = async ($: EngineInterface, here: Here): Promise<void> => {
   if (here.root === '') return
@@ -437,6 +450,7 @@ const saveTasks = async ($: EngineInterface, here: Here): Promise<void> => {
   const list = await update($, tasks, value => stampDone(value, at))
   const saved: SavedTasks = { sessionId: here.id, at, tasks: list }
   await $.store.set(`tasks:${here.root}`, saved)
+  await saveArchive($, here, list)
 }
 
 // This session's record, written into the project's log. The stored log is
@@ -765,6 +779,8 @@ export const register: Register = (on, options) => {
         const carried = carryTasks(await $.store.get(`tasks:${root}`), sessionId, now)
         if (carried.length > 0) await update($, tasks, () => carried)
       }
+      // The finished work already on the board starts the archive.
+      await saveArchive($, here, await read($, tasks))
       await saveSession($, here, false)
       void readGit($, root)
       await refresh($, false)
