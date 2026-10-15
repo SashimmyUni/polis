@@ -261,7 +261,7 @@ const labelled = (
 }
 
 // The wait that holds work up until the person acts, if there is one.
-const blockerOf = (m: Model): Wait | undefined => {
+const blockerOf = (m: Pick<Model, 'waits'>): Wait | undefined => {
   const top = topWait(m.waits)
 
   return top !== undefined && isBlocking(top) ? top : undefined
@@ -294,7 +294,7 @@ const standingText = (tasks: readonly Task[]): string => {
     .join(' · ')
 }
 
-const forecastsFor = (m: Model): LimitForecast[] =>
+const forecastsFor = (m: Pick<Model, 'usage' | 'limits' | 'now'>): LimitForecast[] =>
   forecastsOf(m.usage.rateLimits, m.limits, m.now)
 
 const isShort = (forecast: LimitForecast): boolean =>
@@ -398,10 +398,13 @@ const promptBlock = (el: El, m: Model, room: Room): RenderElement[] => {
 // that is not enough. Rank 0 is never left out.
 export type StripElement = { text: string; color: string; rank: number; isBold?: boolean; short?: string }
 
+// The part of the model the strip is made from: all the status line reads.
+export type StripModel = Pick<Model, 'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'nextStep'>
+
 // The strip, in its one order: what needs the person, the limit warning while
 // it fires, the next step where one is known, the smart zone and tasks done.
 // Empty where there is nothing to say.
-export const stripElements = (m: Model): StripElement[] => {
+export const stripElements = (m: StripModel): StripElement[] => {
   const blocker = blockerOf(m)
   const alert = limitAlert(forecastsFor(m), m.now)
   const context = m.usage.contextTokens
@@ -432,36 +435,46 @@ export const stripElements = (m: Model): StripElement[] => {
 const BAND_BUTTONS = 16
 
 // The elements that fit one row of the width, in the order they were given.
+// Needs you (rank 0) is never left out: it is cut where even it alone is too
+// wide.
 const fitStrip = (strip: readonly StripElement[], columns: number): StripElement[] => {
   let kept = [...strip]
-  const width = (): number => kept.reduce((sum, one) => sum + one.text.length + 1, BAND_BUTTONS)
-  while (width() > columns) {
-    const last = Math.max(...kept.map(one => one.rank))
-    if (kept.some(one => one.rank === last && one.short !== undefined)) {
-      kept = kept.map(({ short, ...one }) =>
-        one.rank === last && short !== undefined ? { ...one, text: short } : { ...one, short },
+  const width = (): number => kept.reduce((sum, element) => sum + element.text.length + 1, BAND_BUTTONS)
+  while (kept.length > 0 && width() > columns) {
+    const last = Math.max(...kept.map(element => element.rank))
+    if (kept.some(element => element.rank === last && element.short !== undefined)) {
+      kept = kept.map(({ short, ...element }) =>
+        element.rank === last && short !== undefined ? { ...element, text: short } : { ...element, short },
       )
-    } else if (last === 0 || kept.every(one => one.rank === last)) {
+    } else if (last === 0) {
       break
     } else {
-      kept = kept.filter(one => one.rank !== last)
+      kept = kept.filter(element => element.rank !== last)
     }
   }
 
   return kept
 }
 
+// One element of the strip as text: cut at the edge on the band, wrapped in
+// City's strip.
+const stripText = (el: El, element: StripElement, wrap: 'truncate-end' | 'wrap'): RenderElement => {
+  const { Text } = el
+
+  return (
+    <Text color={element.color} bold={element.isBold === true} wrap={wrap}>
+      {element.text}
+    </Text>
+  )
+}
+
 // The strip on one row that never wraps, then City and Hide.
 export const band = (el: El, m: Model, a: Actions): RenderElement => {
-  const { Box, Text, Button } = el
+  const { Box, Button } = el
 
   return (
     <Box flexDirection="row" gap={1}>
-      {fitStrip(stripElements(m), m.columns).map(one => (
-        <Text color={one.color} bold={one.isBold === true} wrap="truncate-end">
-          {one.text}
-        </Text>
-      ))}
+      {fitStrip(stripElements(m), m.columns).map(element => stripText(el, element, 'truncate-end'))}
       <Button key="city" label="City" variant="primary" onPress={a.openCity} />
       <Button key="hide" label="Hide" dimColor onPress={a.hideBand} />
     </Box>
@@ -1044,17 +1057,13 @@ const cityText = (el: El, m: Model): RenderElement[] => {
 // nothing is dropped; it wraps where the pane is narrow, one element to a line
 // in the narrow layout. Nothing at all when the strip is empty.
 const cityStrip = (el: El, m: Model): RenderElement[] => {
-  const { Box, Text } = el
+  const { Box } = el
   const strip = stripElements(m)
   if (strip.length === 0) return []
 
   return [
     <Box key="strip" flexDirection={isNarrow(m) ? 'column' : 'row'} flexWrap="wrap" columnGap={1}>
-      {strip.map(one => (
-        <Text color={one.color} bold={one.isBold === true} wrap="wrap">
-          {one.text}
-        </Text>
-      ))}
+      {strip.map(element => stripText(el, element, 'wrap'))}
     </Box>,
   ]
 }

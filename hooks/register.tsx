@@ -71,7 +71,7 @@ import { PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
 import { band, pane, stripElements, summary } from './views'
-import type { Actions, Model } from './views'
+import type { Actions, Model, StripModel } from './views'
 
 const PANE = 'polis'
 const TITLE = 'Polis'
@@ -315,20 +315,31 @@ let isBandAsked = false
 // the pane (an editor's chat panel) this line is all there is to see.
 const refresh = async ($: EngineInterface, shouldOpen: boolean): Promise<void> => {
   const state = await read($, ui)
-  const strip = stripElements(await load($, { sessionId: '', root: '', isStill: false }, 0))
+  const model = await loadStrip($)
+  const strip = stripElements(model)
   $.ui.status(
     (isBandAsked && !state.isBandHidden) || strip.length === 0
       ? undefined
-      : strip.map(one => one.text).join(' · '),
+      : strip.map(element => element.text).join(' · '),
   )
-  const stats = taskStats(await read($, tasks))
-  const runs = await read($, agents)
+  if (!shouldOpen || state.hasOpened) return
 
-  if (shouldOpen && !state.hasOpened && (stats.total > 0 || runs.length > 0)) {
+  const stats = taskStats(model.tasks)
+  if (stats.total > 0 || (await read($, agents)).length > 0) {
     await update($, ui, value => ({ ...value, hasOpened: true }))
     void openPane($).catch(() => undefined)
   }
 }
+
+// Only the stores the strip is made from: the status line follows every move
+// of the context, so it reads no more than it shows.
+const loadStrip = async ($: EngineInterface): Promise<StripModel> => ({
+  now: await $.clock.now(),
+  waits: await read($, waits),
+  limits: await read($, limits),
+  usage: await read($, usage),
+  tasks: await read($, tasks),
+})
 
 const rootOf = async ($: EngineInterface): Promise<string> => {
   const repo = await $.session.repo().catch(() => null)

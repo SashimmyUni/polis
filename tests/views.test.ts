@@ -552,6 +552,19 @@ test('as the band narrows it drops tasks done, the smart-zone tail, the smart zo
   }
 })
 
+test('an element left alone on the band is dropped where it does not fit, not cut', async ($, on) => {
+  mock.clock(on)
+  world(on)
+  await $.tool.call({ tool: 'TaskCreate', tool_use_id: 't1', subject: 'One', description: '' })
+  await $.tool.call({ tool: 'TaskCreate', tool_use_id: 't2', subject: 'Two', description: '' })
+
+  for (const surface of BANDED) {
+    expect(shown(await banded($, surface, 80))).toEqual(['0/2 tasks'])
+    // Sixteen cells of buttons and ten of `0/2 tasks ` take twenty-six.
+    expect(await banded($, surface, 25)).toEqual([])
+  }
+})
+
 test('with nothing to say the band shows only City and Hide', async ($, on) => {
   mock.clock(on)
   world(on)
