@@ -119,7 +119,7 @@ const report = async ($: Engine, args = 'report'): Promise<string> =>
 const savedTasks = (kept: Record<string, unknown>): Task[] =>
   (kept[`tasks:${ROOT}`] as { tasks: Task[] }).tasks
 
-test('a test command is recorded as a check: failed, then passed, then stale after an edit', async ($, on) => {
+test('a test command is recorded as a check: failed, then passed, then stale after an edit, and never reaches the status line', async ($, on) => {
   mock.clock(on)
   const { status, toasts } = world(on)
   let runs = 0
@@ -137,17 +137,17 @@ test('a test command is recorded as a check: failed, then passed, then stale aft
   runs = 0
 
   await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test' })
-  expect(status()).toBe('◆ tests ✘')
+  expect(status()).toBeUndefined()
   // The check is named once as it starts failing, not again while it stays so.
   await $.tool.call({ tool: 'Bash', tool_use_id: 'b2', command: 'npm test' })
   expect(toasts()).toEqual(['Check failed: tests'])
 
   await $.tool.call({ tool: 'Bash', tool_use_id: 'b3', command: 'npm test' })
-  expect(status()).toBe('◆ tests ✔')
+  expect(status()).toBeUndefined()
   expect(await report($)).toContain('| tests | passed | `npm test` |')
 
   await $.tool.call({ tool: 'Edit', tool_use_id: 'e1', file_path: `${ROOT}/src/a.ts`, old_string: 'a', new_string: 'b' })
-  expect(status()).toBe('◆ tests ◌')
+  expect(status()).toBeUndefined()
   expect(await report($)).toContain('| tests | stale | `npm test` |')
 })
 
@@ -222,7 +222,7 @@ test('a question waits on the person while its call is in flight, and the wait l
   await $.tool.call({ tool: 'TodoWrite', tool_use_id: 't1', todos: [{ content: 'One', status: 'pending', activeForm: 'One' }] })
   await $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'q1', questions: [] } as never)
   expect(during).toBe('▲ needs you: a question for you · 0/1 tasks')
-  expect(status()).toBe('◆ 0/1 tasks')
+  expect(status()).toBe('0/1 tasks')
 })
 
 test('a limit on course to run out before it resets is announced once, and kept for every session', async ($, on) => {
@@ -246,7 +246,8 @@ test('a limit on course to run out before it resets is announced once, and kept 
   // Twenty points in twelve minutes: full in twenty-four, hours before the reset.
   expect(toasts()).toHaveLength(1)
   expect(toasts()[0]).toStartWith('The five-hour limit is on course to run out in about ')
-  expect(status()).toStartWith('◆ ⚠ 5h limit out in ')
+  expect(status()).toStartWith('⚠ 5h limit out in ')
+  expect(status()).toEndWith(' · ctx 20k')
 
   await clock.advance(60_000)
   await $.session.measure({ ...(reading(62) as object), rateLimits: [{ kind: 'five_hour', percentUsed: 62, resetsAt }] } as never)
@@ -294,6 +295,40 @@ const VERIFIER = {
   background: true,
   fork: false,
 } as const
+
+test("the status line is the band's list in the band's order, with no checks and no agents running", async ($, on) => {
+  const clock = mock.clock(on)
+  const { status } = world(on)
+  on('classic.PermissionRequest', () => ({}))
+  on('tool.call', { tool: 'Bash' }, () => ({ result: 'Exit code 1\n3 tests failed', isError: true }) as never)
+  const resetsAt = new Date(4 * 3_600_000).toISOString()
+  const reading = (percentUsed: number) =>
+    ({
+      context: { window: 200_000, tokens: 125_000, percent: 63 },
+      rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt }],
+      changed: ['context', 'rateLimits'],
+    }) as never
+
+  await $.session.start(START)
+  await $.turn.start({ text: 'Build the docs site', turnId: 'turn-1' })
+  await $.tool.call({
+    tool: 'TodoWrite',
+    tool_use_id: 't1',
+    todos: [
+      { content: 'One', status: 'completed', activeForm: 'One' },
+      { content: 'Two', status: 'pending', activeForm: 'Two' },
+    ],
+  })
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'npm test' })
+  await $.agent.spawn({ ...VERIFIER, description: 'Write the docs', subagentType: 'polis:worker' })
+  await $.session.measure(reading(40))
+  await clock.advance(12 * 60_000)
+  await $.session.measure(reading(60))
+  expect(status()).toMatch(/^⚠ 5h limit out in .+ · ctx 125k · 1\/2 tasks$/)
+
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } })
+  expect(status()).toMatch(/^▲ needs you: permission for Bash · ⚠ 5h limit out in .+ · ctx 125k · 1\/2 tasks$/)
+})
 
 test("a verifier's PASS marks its task verified, and reopening the task takes the mark off", async ($, on) => {
   mock.clock(on)

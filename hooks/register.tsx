@@ -12,7 +12,7 @@ import type {
   Usage,
   ViewName,
 } from '../types'
-import { CHECK_LABEL, checksLine, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
+import { CHECK_LABEL, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
 import { GIT_DIFF, GIT_STATUS, areaOfPath, noteTouch, parseGit, taskOfEdit } from './codemap'
 import {
   ASKING,
@@ -34,9 +34,7 @@ import {
   forecastsOf,
   heuristicSize,
   hitFile,
-  isBlocking,
   isLive,
-  limitAlert,
   limitName,
   limitToast,
   matchTask,
@@ -57,13 +55,10 @@ import {
   stampDone,
   suggestSkills,
   taskStats,
-  topWait,
   under,
   upsertProc,
-  waitMark,
   zoneCrossing,
   zoneLimit,
-  zoneMark,
   zoneNote,
   zoneOf,
   zoneOwing,
@@ -75,7 +70,7 @@ import { REPORT_FILE, reportOf } from './report'
 import { PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
-import { band, pane, summary } from './views'
+import { band, pane, stripElements, summary } from './views'
 import type { Actions, Model } from './views'
 
 const PANE = 'polis'
@@ -315,36 +310,19 @@ const measure = (site: string, room: object): void => {
 let isBandAsked = false
 
 // The status line stands in for the band while the band is hidden, and where
-// no surface draws one.
+// no surface draws one: the band's strip as plain text, every element kept,
+// since the line has no width of its own. Where no surface draws the band or
+// the pane (an editor's chat panel) this line is all there is to see.
 const refresh = async ($: EngineInterface, shouldOpen: boolean): Promise<void> => {
-  const list = await read($, tasks)
-  const runs = await read($, agents)
   const state = await read($, ui)
-  const stats = taskStats(list)
-  const live = runs.filter(isLive).length
-  const now = await $.clock.now()
-  // What needs the person comes first: where no surface draws the band or the
-  // pane (an editor's chat panel) this line is all there is to see.
-  const top = topWait(await read($, waits))
-  const measured = await read($, usage)
-  const alert = limitAlert(forecastsOf(measured.rateLimits, await read($, limits), now), now)
-  const zone = zoneMark(zoneOf(measured.contextTokens, measured.zoneLimit), measured.contextTokens)
-  const ran = checksLine(await read($, checks))
-  const parts = []
-  if (top !== undefined && isBlocking(top)) parts.push(waitMark(top))
-  if (alert !== undefined) parts.push(alert)
-  if (zone !== undefined) parts.push(zone)
-  if (ran !== '') parts.push(ran)
-  if (stats.total > 0) parts.push(`${stats.done}/${stats.total} tasks`)
-  if (live > 0) parts.push(`${live} agent${live === 1 ? '' : 's'} running`)
-
-  if ((isBandAsked && !state.isBandHidden) || parts.length === 0) {
-    $.ui.status(undefined)
-  } else {
-    const text = parts.join(' · ')
-    // A wait leads with its own mark.
-    $.ui.status(text.startsWith('▲') ? text : `◆ ${text}`)
-  }
+  const strip = stripElements(await load($, { sessionId: '', root: '', isStill: false }, 0))
+  $.ui.status(
+    (isBandAsked && !state.isBandHidden) || strip.length === 0
+      ? undefined
+      : strip.map(one => one.text).join(' · '),
+  )
+  const stats = taskStats(await read($, tasks))
+  const runs = await read($, agents)
 
   if (shouldOpen && !state.hasOpened && (stats.total > 0 || runs.length > 0)) {
     await update($, ui, value => ({ ...value, hasOpened: true }))
@@ -1499,8 +1477,8 @@ export const register: Register = (on, options) => {
       const known = await read($, limits)
       const hasLimits = e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)
       if (hasLimits) await trackLimits($, (await read($, usage)).rateLimits)
-      // The status line follows the smart-zone level, whichever way it moved.
-      if (hasLimits || level !== zoneOf(before.contextTokens, before.zoneLimit)) await refresh($, false)
+      // The status line carries the context reading, so it follows every move.
+      if (hasLimits || tokens !== before.contextTokens) await refresh($, false)
     } catch (error) {
       say($, 'session.measure', error)
     }
