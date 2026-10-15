@@ -1040,14 +1040,33 @@ const cityText = (el: El, m: Model): RenderElement[] => {
   ]
 }
 
-// The picture stands alone and takes the whole room: what it has to say is
-// written on the city itself, so nothing is set under it.
+// City's top strip: the band's whole strip, which the pane has room for, so
+// nothing is dropped; it wraps where the pane is narrow, one element to a line
+// in the narrow layout. Nothing at all when the strip is empty.
+const cityStrip = (el: El, m: Model): RenderElement[] => {
+  const { Box, Text } = el
+  const strip = stripElements(m)
+  if (strip.length === 0) return []
+
+  return [
+    <Box key="strip" flexDirection={isNarrow(m) ? 'column' : 'row'} flexWrap="wrap" columnGap={1}>
+      {strip.map(one => (
+        <Text color={one.color} bold={one.isBold === true} wrap="wrap">
+          {one.text}
+        </Text>
+      ))}
+    </Box>,
+  ]
+}
+
+// The strip above the drawing. The picture takes the rest of the room: what it
+// has to say is written on the city itself, so nothing is set under it.
 const cityView = (el: El, m: Model, Svg: SvgEl | undefined): RenderElement[] => {
-  if (Svg === undefined) return cityText(el, m)
+  if (Svg === undefined) return [...cityStrip(el, m), ...cityText(el, m)]
   const { aspect } = m
   const layout = isNarrow(m) ? 'column' : aspect === undefined ? 'avenue' : layoutFor(m, aspect)
 
-  return [<Svg source={renderCity(m, layout, aspect)} alt={cityAlt(m)} isInteractive />]
+  return [...cityStrip(el, m), <Svg source={renderCity(m, layout, aspect)} alt={cityAlt(m)} isInteractive />]
 }
 
 // ------------------------------------------------------------------- summary

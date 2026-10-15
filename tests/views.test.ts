@@ -593,6 +593,92 @@ test('the limit warning is on the band only while a limit is on course to run ou
   expect(await warned()).toBe(true)
 })
 
+// What the pane on City shows between its row of views and the drawing (the
+// vector city, or the text city under its heading), and the drawing's first
+// element.
+const cityStrip = async (
+  $: Engine,
+  surface: Surface,
+  columns: number,
+): Promise<{ strip: FoundElement[]; drawing: FoundElement | undefined }> => {
+  const ui = await $.ui.mount({ ...paneAt(columns), surface })
+  await ui.press({ key: 'view-city' })
+  const all = await ui.findAll({})
+  await ui.unmount()
+  const views = all.findLastIndex(one => one.type === 'Button' && one.key?.startsWith('view-') === true)
+  const drawn = all.findIndex(one => one.type === 'Svg' || (one.type === 'Text' && one.text === 'CITY'))
+
+  return {
+    strip: all.slice(views + 1, drawn).filter(one => one.type === 'Text'),
+    drawing: all[drawn],
+  }
+}
+
+// The pane on City in each renderer: the vector city on the desktop, wide and
+// narrow (its column layout), and the text city in the terminal.
+const CITIES = [
+  ['desktop', 100],
+  ['desktop', 30],
+  ['vscode', 100],
+  ['terminal', 100],
+  ['terminal', 30],
+] as const
+
+test('City opens with the band’s strip above the drawing, whole however narrow the pane', async ($, on) => {
+  await everything($, on)
+  const band = shown(await banded($, 'terminal', 200))
+  expect(band).toHaveLength(4)
+
+  for (const [surface, columns] of CITIES) {
+    const { strip, drawing } = await cityStrip($, surface, columns)
+    expect(shown(strip)).toEqual(band)
+    expect(drawing?.type).toBe(surface === 'terminal' ? 'Text' : 'Svg')
+    // Needs you leads in rose, as on the band.
+    expect(strip[0]?.props.color).toBe(C.fail)
+  }
+})
+
+test('City’s strip shows the limit warning only while a limit is on course to run out', async ($, on) => {
+  const clock = mock.clock(on)
+  world(on)
+  const resetsAt = new Date(clock.now() + 4 * 3_600_000).toISOString()
+  const measure = (percentUsed: number) =>
+    $.session.measure({
+      context: { window: 200_000, tokens: 20_000, percent: 10 },
+      rateLimits: [{ kind: 'five_hour', percentUsed, resetsAt }],
+      changed: ['rateLimits'],
+    } as never)
+  const warned = async (surface: Surface): Promise<boolean> =>
+    shown((await cityStrip($, surface, 100)).strip).some(one => one.startsWith('⚠'))
+
+  await measure(10)
+  await clock.advance(12 * 60_000)
+  await measure(11)
+  for (const surface of ['desktop', 'terminal'] as const) expect(await warned(surface)).toBe(false)
+  await clock.advance(12 * 60_000)
+  await measure(40)
+  for (const surface of ['desktop', 'terminal'] as const) {
+    expect(await warned(surface)).toBe(true)
+    expect(shown((await cityStrip($, surface, 100)).strip)).toEqual(shown(await banded($, 'terminal', 200)))
+  }
+})
+
+test('with every element empty City shows no strip', async ($, on) => {
+  mock.clock(on)
+  world(on)
+  await $.session.measure({
+    context: { window: 200_000, tokens: 0, percent: 0 },
+    rateLimits: [],
+    changed: ['context'],
+  } as never)
+
+  for (const [surface, columns] of CITIES) {
+    const { strip, drawing } = await cityStrip($, surface, columns)
+    expect(strip).toEqual([])
+    expect(drawing).toBeDefined()
+  }
+})
+
 test('every view draws on every surface, wide and narrow, and the hotkeys follow the order', async ($, on) => {
   mock.clock(on)
   const here = world(on)

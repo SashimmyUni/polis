@@ -93,7 +93,7 @@ The pane shows `◆ POLIS`, the project's name and phase, and one tab per view. 
 | --- | --- | --- |
 | 1 | Overview | What needs you, the project and this session, milestones and progress, this prompt against its expected range, tasks, checks, git, working agents, background processes, recent activity and the most-edited files. Buttons: **Orchestrate** (o), **Clear finished** (c), and **Stop turn** (s) while a prompt is running. |
 | 2 | Project | Every session of this project, newest first, with the agents each ran and their sub-agents. |
-| 3 | City | The map (a row of blocks per district in a terminal). |
+| 3 | City | The top strip (the band's elements: what needs you, the limit warning, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). |
 | 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task. |
 | 5 | Agents | The main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
 | 6 | Resources | Tokens, time and tool calls against expected; the context window; rate limits with a forecast for each, and cost; tokens by agent; what prompts usually cost in this project. |
@@ -496,7 +496,7 @@ Hovering works where the host draws the city as a picture and has a pointer, suc
 
 ### Size and the three layouts
 
-The picture is the whole City view: nothing is written under it. Polis crops the drawing to what is built, then lets it out to the shape of the pane, so the city is as large as the pane allows. A pane that is wider or taller than the city gets more night sky around it, not a smaller city in a corner.
+The City view opens with its top strip: the same elements as the band, in the band's order (what needs you, the limit warning while it fires, the smart zone and tasks done), so the band is a one-line preview of City. The pane has room the band lacks, so the strip drops nothing: it wraps as the pane narrows, and in the column layout it stacks one element to a line. With nothing to say there is no strip. It shows wherever the pane draws, VS Code included, where there is no band. Below the strip, the picture takes the rest of the view: nothing is written under it. Polis crops the drawing to what is built, then lets it out to the shape of the pane, so the city is as large as the pane allows. A pane that is wider or taller than the city gets more night sky around it, not a smaller city in a corner.
 
 Polis works out the pane's shape from the size the host reports, and picks the layout that draws the city largest in it (the column only when it is at least a quarter larger, since its key is a list and not on the buildings):
 
@@ -512,7 +512,7 @@ The width of the pane switches between them. Under 44 columns you get the column
 
 ### The terminal's text version
 
-A terminal cannot draw pictures, so the City view is a row of text per district:
+A terminal cannot draw pictures, so under the top strip the City view is a row of text per district:
 
 ```
 ◆ city hall needs you ●
