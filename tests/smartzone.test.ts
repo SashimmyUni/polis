@@ -263,3 +263,30 @@ test('with guidance off Claude is told nothing, and the person is still warned',
   expect(here.toasts).toHaveLength(1)
   expect((await reading($))?.text).toBe('ctx 155k · out of the smart zone')
 })
+
+test('where no band is drawn the status line carries the smart-zone state, and drops it back inside', async ($, on) => {
+  const here = world(on)
+  await $.session.start(START)
+
+  await measure($, 100_000)
+  expect(here.status()).toBeUndefined()
+  await measure($, 125_000)
+  expect(here.status()).toBe('◆ ctx 125k: smart-zone caution')
+  await measure($, 151_000)
+  expect(here.status()).toBe('◆ ctx 151k: out of the smart zone')
+  await measure($, 30_000)
+  expect(here.status()).toBeUndefined()
+})
+
+test('a band left showing keeps the status line clear, and hiding it brings the state back', async ($, on) => {
+  const here = world(on)
+  await $.session.start(START)
+  await measure($, 151_000)
+  const ui = await $.ui.mount({ ...bandAt(160), surface: 'terminal' })
+  await measure($, 125_000)
+  expect(here.status()).toBeUndefined()
+
+  await ui.press({ key: 'hide' })
+  expect(here.status()).toBe('◆ ctx 125k: smart-zone caution')
+  await ui.unmount()
+})

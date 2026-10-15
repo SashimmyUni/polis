@@ -879,6 +879,15 @@ export const zoneNote = (level: ZoneLevel, tokens: number, limit: number): strin
         'or aim to stop at the next phase boundary.',
       ].join(' ')
 
+// The smart-zone state in a few words, for the status line and the page;
+// nothing inside the smart zone.
+export const zoneMark = (level: ZoneLevel, tokens: number): string | undefined =>
+  level === 'out'
+    ? `ctx ${compact(tokens)}: out of the smart zone`
+    : level === 'caution'
+      ? `ctx ${compact(tokens)}: smart-zone caution`
+      : undefined
+
 // The toast for a crossing, saying what to do about it.
 export const zoneToast = (level: ZoneLevel, tokens: number, limit: number): string =>
   level === 'out'

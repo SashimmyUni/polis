@@ -63,6 +63,7 @@ import {
   waitMark,
   zoneCrossing,
   zoneLimit,
+  zoneMark,
   zoneNote,
   zoneOf,
   zoneOwing,
@@ -325,14 +326,14 @@ const refresh = async ($: EngineInterface, shouldOpen: boolean): Promise<void> =
   // What needs the person comes first: where no surface draws the band or the
   // pane (an editor's chat panel) this line is all there is to see.
   const top = topWait(await read($, waits))
-  const alert = limitAlert(
-    forecastsOf((await read($, usage)).rateLimits, await read($, limits), now),
-    now,
-  )
+  const measured = await read($, usage)
+  const alert = limitAlert(forecastsOf(measured.rateLimits, await read($, limits), now), now)
+  const zone = zoneMark(zoneOf(measured.contextTokens, measured.zoneLimit), measured.contextTokens)
   const ran = checksLine(await read($, checks))
   const parts = []
   if (top !== undefined && isBlocking(top)) parts.push(waitMark(top))
   if (alert !== undefined) parts.push(alert)
+  if (zone !== undefined) parts.push(zone)
   if (ran !== '') parts.push(ran)
   if (stats.total > 0) parts.push(`${stats.done}/${stats.total} tasks`)
   if (live > 0) parts.push(`${live} agent${live === 1 ? '' : 's'} running`)
@@ -1490,10 +1491,10 @@ export const register: Register = (on, options) => {
         await note($, 'context', crossed === 'out' ? 'Out of the smart zone' : 'Smart-zone caution')
       }
       const known = await read($, limits)
-      if (e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)) {
-        await trackLimits($, (await read($, usage)).rateLimits)
-        await refresh($, false)
-      }
+      const hasLimits = e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)
+      if (hasLimits) await trackLimits($, (await read($, usage)).rateLimits)
+      // The status line follows the smart-zone level, whichever way it moved.
+      if (hasLimits || level !== zoneOf(before.contextTokens, before.zoneLimit)) await refresh($, false)
     } catch (error) {
       say($, 'session.measure', error)
     }
