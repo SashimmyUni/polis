@@ -3,6 +3,7 @@ import type { Elements, RenderElement } from 'claude-code'
 import type {
   Activity,
   AgentRun,
+  Archive,
   Check,
   FamilyCounts,
   FileHit,
@@ -26,7 +27,7 @@ import type {
 } from '../types'
 import { CHECK_KINDS, checkLines, checksLine, stateOf } from './checks'
 import type { CheckState } from './checks'
-import { cityAlt, layoutFor, renderCity } from './city'
+import { cityAlt, layoutFor, quartersOf, renderCity } from './city'
 import { areasOfFiles, gitLine } from './codemap'
 import { avatarAlt, avatarSvg } from './icons'
 import {
@@ -99,12 +100,15 @@ export type Model = {
   root: string
   /** True when the person turned the city's motion off. */
   isStill: boolean
+  /** The project's archive less what is on the board: what the full city adds. */
+  archived: Archive | null
   /** The next step the flow calls for, in full and as its first move. Nothing sets it yet. */
   nextStep?: { text: string; short: string }
 }
 
 export type Actions = {
   setView: (view: ViewName) => void
+  toggleCity: () => void
   openCity: () => void
   hideBand: () => void
   orchestrate: () => void
@@ -970,10 +974,15 @@ const skillsView = (el: El, m: Model): RenderElement[] => {
   ]
 }
 
-// The city where no vector drawing is possible: one row per district.
+// The city the City view draws: the full one adds the archive.
+const shownCity = (m: Model): Model & { archive?: Archive } =>
+  m.ui.cityView === 'full' ? { ...m, archive: m.archived ?? { entries: [], folded: {} } } : m
+
+// The city where no vector drawing is possible: one row per district, and in
+// the full city its archived work in dim blocks after it, the rest counted.
 const cityText = (el: El, m: Model): RenderElement[] => {
   const { Box, Text } = el
-  const districts = districtsOf(m.tasks)
+  const districts = quartersOf(shownCity(m))
   const running = m.procs.filter(proc => proc.status === 'running').length
   const used = Object.keys(m.skills.used).length
   const [full, rest] = bar(m.usage.contextPercent, 100, 10)
@@ -1014,6 +1023,10 @@ const cityText = (el: El, m: Model): RenderElement[] => {
               </Text>
             )
           })}
+          {district.archived.map(() => (
+            <Text color={C.faint}>█</Text>
+          ))}
+          {district.oldTown > 0 && <Text color={C.faint}>+{district.oldTown}</Text>}
           <Text color={C.muted}>
             {done}/{district.tasks.length}
           </Text>
@@ -1070,12 +1083,18 @@ const cityStrip = (el: El, m: Model): RenderElement[] => {
 
 // The strip above the drawing. The picture takes the rest of the room: what it
 // has to say is written on the city itself, so nothing is set under it.
-const cityView = (el: El, m: Model, Svg: SvgEl | undefined): RenderElement[] => {
-  if (Svg === undefined) return [...cityStrip(el, m), ...cityText(el, m)]
+const cityView = (el: El, m: Model, a: Actions, Svg: SvgEl | undefined): RenderElement[] => {
+  const { Button } = el
+  const isFull = m.ui.cityView === 'full'
+  const toggle = (
+    <Button key="city-view" label={isFull ? 'Current city' : 'Full city'} hotkey="f" onPress={a.toggleCity} />
+  )
+  if (Svg === undefined) return [...cityStrip(el, m), toggle, ...cityText(el, m)]
   const { aspect } = m
-  const layout = isNarrow(m) ? 'column' : aspect === undefined ? 'avenue' : layoutFor(m, aspect)
+  const city = shownCity(m)
+  const layout = isNarrow(m) ? 'column' : aspect === undefined ? 'avenue' : layoutFor(city, aspect)
 
-  return [...cityStrip(el, m), <Svg source={renderCity(m, layout, aspect)} alt={cityAlt(m)} isInteractive />]
+  return [...cityStrip(el, m), toggle, <Svg source={renderCity(city, layout, aspect)} alt={cityAlt(m)} isInteractive />]
 }
 
 // ------------------------------------------------------------------- summary
@@ -1141,7 +1160,7 @@ export const pane = (
   const { view } = m.ui
   const body =
     view === 'city'
-      ? cityView(el, m, Svg)
+      ? cityView(el, m, a, Svg)
       : view === 'project'
         ? projectView(el, m)
         : view === 'tasks'

@@ -267,7 +267,10 @@ export type Skills = {
 
 export type ViewName = 'overview' | 'project' | 'city' | 'tasks' | 'agents' | 'resources' | 'skills'
 
-export type Ui = { view: ViewName; isBandHidden: boolean; hasOpened: boolean }
+/** Which city the City view draws: the board's, or the board's with the archive. */
+export type CityView = 'current' | 'full'
+
+export type Ui = { view: ViewName; isBandHidden: boolean; hasOpened: boolean; cityView: CityView }
 
 export type Activity = { at: number; kind: string; text: string }
 

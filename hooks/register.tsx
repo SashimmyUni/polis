@@ -65,7 +65,7 @@ import {
   zoneToast,
 } from './logic'
 import type { EstimateMode, SavedTasks } from './logic'
-import { asArchive, syncArchive } from './archive'
+import { EMPTY_ARCHIVE, asArchive, offBoard, syncArchive } from './archive'
 import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
 import { REPORT_FILE, reportOf } from './report'
 import { PAGE_REFRESH_SECONDS, cityPage } from './page'
@@ -128,6 +128,7 @@ const ui = atom({ plugin: 'polis', key: 'ui' } as const, {
   view: 'overview',
   isBandHidden: false,
   hasOpened: false,
+  cityView: 'current',
 })
 const activity = atom({ plugin: 'polis', key: 'activity' } as const, [])
 const files = atom({ plugin: 'polis', key: 'files' } as const, [])
@@ -551,11 +552,18 @@ const stopTurn = async ($: EngineInterface): Promise<void> => {
 }
 
 const openAt = async ($: EngineInterface, view: ViewName | undefined): Promise<UiOpenResult> => {
+  // A pane that was closed opens on the current city, as does one whose
+  // state the engine cannot tell.
+  const isOpen = await $.ui.panes().then(
+    open => open.some(one => one.id === PANE),
+    () => false,
+  )
   await update($, ui, value => ({
     ...value,
     isBandHidden: false,
     hasOpened: true,
     view: view ?? value.view,
+    cityView: isOpen ? value.cityView : 'current',
   }))
 
   return openPane($)
@@ -563,6 +571,8 @@ const openAt = async ($: EngineInterface, view: ViewName | undefined): Promise<U
 
 const actionsOf = ($: EngineInterface): Actions => ({
   setView: view => update($, ui, value => ({ ...value, view })),
+  toggleCity: () =>
+    update($, ui, value => ({ ...value, cityView: value.cityView === 'full' ? 'current' : 'full' })),
   openCity: () => openAt($, 'city'),
   hideBand: async () => {
     await update($, ui, value => ({ ...value, isBandHidden: true }))
@@ -585,6 +595,7 @@ const load = async (
 ): Promise<Model> => {
   await read($, tick)
   const record = await read($, project)
+  const board = await read($, tasks)
 
   return {
     now: await $.clock.now(),
@@ -598,7 +609,8 @@ const load = async (
     checks: await read($, checks),
     git: await read($, git),
     log: await read($, log),
-    tasks: await read($, tasks),
+    tasks: board,
+    archived: offBoard((await read($, archive)) ?? EMPTY_ARCHIVE, board, session.sessionId),
     agents: await read($, agents),
     procs: await read($, procs),
     turn: await read($, turn),

@@ -784,7 +784,7 @@ const ARCHIVE_CAP = 24
 
 // The districts to draw: the board's in the order their first task
 // appeared, then those only the archive knows, newest first.
-const quartersOf = (m: CityInput, cap = ARCHIVE_CAP): Quarter[] => {
+export const quartersOf = (m: CityInput, cap = ARCHIVE_CAP): Quarter[] => {
   const quarters: Quarter[] = districtsOf(m.tasks).map(district => ({ ...district, archived: [], oldTown: 0 }))
   if (m.archive === undefined) return quarters
   const find = (area: string): Quarter => {

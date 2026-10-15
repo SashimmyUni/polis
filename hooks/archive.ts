@@ -112,6 +112,14 @@ export const syncArchive = (archive: Archive, board: readonly Task[], sessionId:
   return foldArchive({ entries: [...kept, ...added], folded: archive.folded })
 }
 
+// What the full city draws beside the board: the archive less the tasks
+// still on the board, so that none is drawn twice.
+export const offBoard = (archive: Archive, board: readonly Task[], sessionId: string): Archive => {
+  const shown = new Set(board.map(task => archivedId(task, sessionId)))
+
+  return { entries: archive.entries.filter(entry => !shown.has(entry.id)), folded: archive.folded }
+}
+
 // How many finished tasks the archive stands for, district by district.
 export const archiveCounts = (archive: Archive): { [area: string]: number } => {
   const counts = { ...archive.folded }
