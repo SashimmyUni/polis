@@ -1,10 +1,7 @@
-# Validates the mod and runs its tests with the Claude Code CLI.
-#
-# Unconfirmed: mods are an early-access feature (Claude Code 2.1.293 and
-# later). Whether the published npm package carries `plugin validate` and
-# `plugin test`, and whether they run without signing in, has not been tried
-# on a runner. If this job fails at those steps, that is the first thing to
-# check.
+# Runs the check command (tools/check.ts), the same one run by hand, so CI and
+# a local check can't disagree. The published Claude Code
+# package carries `plugin validate` and `plugin test`, and both run on a
+# runner without signing in.
 name: CI
 
 on:
@@ -22,7 +19,5 @@ jobs:
           node-version: 22
       - name: Install the Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
-      - name: Validate the mod
-        run: claude plugin validate .
-      - name: Run the tests
-        run: claude plugin test .
+      - name: Check the mod
+        run: node tools/check.ts
