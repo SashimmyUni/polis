@@ -80,7 +80,7 @@ Three words give text and open nothing, wherever you are:
 | --- | --- |
 | `/city report` | Answers with the session as a Markdown report (see "Session report"). |
 | `/city report save` | Does the same and also writes the report to `polis-report.md` in the session's working directory. |
-| `/city page` | Replies with the path and `file:///` URL of the page on disk (see "A self-refreshing page on disk"). |
+| `/city page` | Replies with the path and `file:///` URL of both pages on disk, the current city and the full city, and the steps to open one in VS Code (see "A self-refreshing page on disk"). |
 
 Where nothing draws (a headless run), `/city project` answers with the project's sessions as text too, and every other `/city` gives the board as text. Where a surface draws, `/city project` opens the pane at the Project view.
 
@@ -94,7 +94,7 @@ The pane shows `◆ POLIS`, the project's name and phase, and one tab per view. 
 | --- | --- | --- |
 | 1 | Overview | What needs you, the project and this session, milestones and progress, this prompt against its expected range, tasks, checks, git, working agents, background processes, recent activity and the most-edited files. Buttons: **Orchestrate** (o), **Clear finished** (c), and **Stop turn** (s) while a prompt is running. |
 | 2 | Project | Every session of this project, newest first, with the agents each ran and their sub-agents. |
-| 3 | City | The top strip (the band's elements: what needs you, the limit warning, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). |
+| 3 | City | The top strip (the band's elements: what needs you, the limit warning, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). Button: **Full city** (f), which adds everything the project has finished, and then reads **Current city** to switch back (see "The full city"). |
 | 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task. |
 | 5 | Agents | The main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
 | 6 | Resources | Tokens, time and tool calls against expected; the context window; rate limits with a forecast for each, and cost; tokens by agent; what prompts usually cost in this project. |
@@ -108,17 +108,24 @@ Polis lays the pane out for the width it is actually given. Under 44 columns it 
 
 ### A self-refreshing page on disk
 
-While a session runs, Polis also writes the current city into an HTML file, and the page reloads itself every 3 seconds. Open it once in any browser, or in a VS Code tab with a preview extension, and leave it beside your editor. No server is needed.
+While a session runs, Polis also writes the city into two HTML files, one for the current city and one for the full city (see "The full city"), and each page reloads itself every 3 seconds. Open one once in any browser, or in VS Code's Integrated Browser, and leave it beside your editor. No server is needed.
 
 | | |
 | --- | --- |
-| The file | `<project root>/.polis/city.html`. The project root is the git repository root, or the session's working directory outside a repository. |
-| Beside it | `.polis/.gitignore` containing `*`, so the folder never shows in `git status`. |
-| What it shows | The city only, with the project's name and a one-line description above it. The Tasks, Agents and Resources views are not on the page. |
-| When it is written | Each time the board changes the picture. An idle session writes nothing. |
-| After the session | The file stays, as the last picture. |
+| The files | `<project root>/.polis/city.html` (the current city) and `<project root>/.polis/city-full.html` (the full city). The project root is the git repository root, or the session's working directory outside a repository. |
+| Beside them | `.polis/.gitignore` containing `*`, so the folder never shows in `git status`. |
+| The header | The project's name; what needs you (`▲ needs you: permission for Bash`), or else whether the session is working or idle; the smart-zone state (`ctx 122k`, amber at the caution, rose past the limit); tasks done out of all (`2/5 tasks done`); a link to the other page (**full city** or **current city**); and a one-line description of the city. |
+| What it shows | The city only. The Tasks, Agents and Resources views are not on the pages. |
+| When it is written | Each page, each time its picture changes. An idle session writes nothing. |
+| After the session | The files stay, as the last pictures. |
 
-`/city page` replies with the file's path and its `file:///` URL. To turn the writing off, set `page` to `false` (see "Options").
+**Keeping it open in VS Code.** `/city page` replies with both files' paths and `file:///` URLs, and the steps to open one beside the terminal, once:
+
+1. Open the Command Palette (Ctrl+Shift+P, or Cmd+Shift+P on a Mac).
+2. Run **Open Integrated Browser**.
+3. Paste the page's `file:///` URL into its address bar.
+
+The Integrated Browser shows the page and reloads it whenever Polis writes it again (checked by hand in VS Code 1.141). Switch between the two cities with the link in the header. To turn the writing off, set `page` to `false` (see "Options").
 
 ### How work gets onto the board
 
@@ -163,9 +170,10 @@ The **Orchestrate** button in the Overview replaces the prompt's text with `/orc
 | `guidance` | on | The standing instruction and the `mcp__polis__project` tool, as above. On unless set to `false`. |
 | `autoOpen` | on | Open the pane the first time tasks or agents appear in a session. On unless set to `false`. |
 | `motion` | on | Let the city move: its cars, its boat, its fireworks and the rest. With `false` the city is drawn still (see "A still city"). On unless set to `false`. |
-| `page` | on | Write the city to `.polis/city.html` in the project each time the board changes (see "A self-refreshing page on disk"). Set it to `false` to turn the writing off. |
+| `page` | on | Write the city to `.polis/city.html` and the full city to `.polis/city-full.html` in the project each time the board or the archive changes (see "A self-refreshing page on disk"). Set it to `false` to turn the writing off. |
+| `smartZone` | 150000 | The smart-zone limit, in tokens (see "The smart zone"). On a window too small to hold it, the limit is 80% of the window instead. Between 10,000 and 2,000,000. |
 
-Set them in `/config`, where each option is a row and a change reloads Polis with the new value (the plugin manifest titles them Expected resources, Guide Claude, Open the dashboard by itself, Animate the city and Page on disk), or in settings under `pluginConfigs.polis.options`:
+Set them in `/config`, where each option is a row and a change reloads Polis with the new value (the plugin manifest titles them Expected resources, Guide Claude, Open the dashboard by itself, Animate the city, Page on disk and Smart-zone limit), or in settings under `pluginConfigs.polis.options`:
 
 ```json
 {
@@ -180,6 +188,7 @@ Polis keeps these records across sessions. All but the limit readings are keyed 
 - **The project record:** the name, the phase, the milestones, how many sessions, turns and tokens the project has had, and a count of tasks completed (no view shows that count). When the project has no log yet, the Overview shows the counts as `session 3 · 41 turns · 1.2M tokens so far`.
 - **The project log (`log:<root>`):** one record for each session of the project: when it began and was last active, a title (the first prompt, cut to 80 characters), its turns, tokens, cost, tasks done out of all, files edited, and every agent it ran with the sub-agents each started. It keeps the newest 40 sessions, and all but the newest 10 keep their top-level agents only. It is written when a session starts, each time Claude finishes answering and when the session ends (a session that ended never shows a live agent). A session that is cleared or resumed under a new id begins a new record. This is what the Project view reads.
 - **The carried tasks (`tasks:<root>`):** the board's tasks, saved each time Claude finishes answering and when a session ends. The next session in the project starts with them (see below).
+- **The archive (`archive:<root>`):** every task the project has finished, for the full city. Each entry keeps the task's subject, district, verdict, when it was finished and its session. A task is added the first time it is saved as finished, and a session starting adds the finished tasks already on the carried board, so the week before the archive existed is kept (anything older is gone). A task reopened leaves the archive and shows as open work instead. The newest 2,000 are kept in full; older ones fold into an exact count per district, which the old towns show. A damaged or hand-edited archive is read back safely: anything malformed is dropped.
 - **The turn history:** the size, tokens, time and tool calls of your last 300 finished prompts. A prompt is recorded only when it ends with an answer. This is what the expected ranges are drawn from.
 - **The limit readings (`limits`):** the readings of your account's usage-limit windows, kept for the pace forecast. They belong to the account and not to a project, so parallel sessions in any project add to one line.
 
@@ -541,6 +550,26 @@ ui         █ █ ✘ 3/3
 
 The text version shows up to 12 districts, one more than the picture. It does not show sub-tasks apart from other tasks, blocker arcs, the prompt meter, the callouts or tooltips. With no tasks it says "No districts yet: they appear with the first tasks."
 
+In the full city (the **Full city** button, f) each row goes on with the district's archived work: up to 24 dim `█` blocks, newest first, then a count of the rest such as `+312`. Districts only the archive knows get rows of their own.
+
+```
+api        █ ▄ ▓ ░ █ █ █ █ █ █ +312 2/4
+```
+
+### The full city
+
+The **Full city** button on the City view (hotkey f) adds everything the project has finished, from its archive (see "What Polis remembers"), to the current city. The button then reads **Current city** and switches back.
+
+- **Archived buildings.** Each district shows its newest archived tasks, up to 24, as single buildings behind this week's work. They are quieter: a grey body, dim windows, nothing on the roof, and no pennant or cross whatever their verdict. Their tooltips end with `archived`.
+- **Old towns.** A district's older finished work, and the counts the archive has folded, stand as an old town: three towers on one lot that grow taller the more they stand for, with a label under the district's name such as `old town · 312 done`.
+- **Districts only the archive knows** (areas finished long ago) are laid out like any other, with `0/0` on their plates.
+- **Once only.** A task both on the board and in the archive (finished this week) is drawn once, as this week's work.
+- **The live city is unchanged.** Agents, City Hall, the tank, the signal mast and the fireworks are as in the current city, and the moon still counts the milestones or the board, never the archive.
+- **It fits.** The full city sheds detail like any other large city (see "Very large boards"), and where that is not enough each district shows fewer archived buildings (12, then 6, then none), the rest joining its old town.
+- **The pane always opens on the current city.** The full view stays up until you switch back or close the pane; it is not remembered between sessions.
+
+The full city is also written to `.polis/city-full.html` (see "A self-refreshing page on disk").
+
 ### Very large boards
 
 The host accepts a drawing of at most 131,072 characters, and a big board can pass that. Polis then draws the city again with less, one step at a time:
@@ -602,6 +631,22 @@ Only **short** and **spent** raise a warning:
 - One toast per window: "The five-hour limit is on course to run out in about 1h20m, 1h20m before it resets". It is not given again until the window has reset.
 
 The Overview and the city do not show the forecast.
+
+### The smart zone
+
+A model reasons sharply only up to a point, about 150k tokens of context on state-of-the-art models, whatever the size of its window. Polis measures the session's context in tokens against that **smart-zone limit**, so a 1M-token window does not hide that the work has left it.
+
+| Level | When | What you see |
+| --- | --- | --- |
+| Inside | Below the caution | `ctx 98k` in grey on the band (and on the status line where it stands in for the band). No toast. |
+| Smart-zone caution | From 80% of the limit (120k by default) | `ctx 122k` in amber on the band, `ctx 122k: smart-zone caution` in amber in the page's header, and one toast. |
+| Out of the smart zone | From the limit (150k by default) | `ctx 151k · out of the smart zone` in rose on the band and the status line, `ctx 151k: out of the smart zone` in rose in the page's header, and one toast. |
+
+- **The limit** is the `smartZone` option (150,000 by default), or 80% of the context window where that is smaller. An unknown window leaves the option alone.
+- **Once per crossing.** Each toast comes the first time the context climbs past its level. Once the context falls back below the caution (after `/compact`, say), both warnings are armed again for the next climb. A crossing in the middle of a long prompt toasts at once.
+- **The status line** carries the band's reading, in the band's words, wherever the band is hidden or absent (see "The band above the prompt").
+- **Claude is told too**, once per crossing, by a note added after your next prompt (never in the system prompt, whose cache a long session cannot afford to lose). At the caution the note asks Claude to plan how the work will stop: hand independent remaining pieces to sub-agents, or aim to stop at the next phase boundary. Past the limit it asks Claude to stop at the next phase boundary and recommend `/clear` (after writing down what the next phase needs) when the next phase does not depend on this conversation, or `/compact` when it does and losing some detail will not hurt; and never to carry on past the limit without saying so.
+- **`guidance` off** sends Claude no note. Your own warnings (band, toasts, status line, page) stay on.
 
 ### Checks
 
@@ -890,7 +935,8 @@ A turn is added to this project's history when the main session finishes it with
 | Toast | When |
 | --- | --- |
 | "This prompt is running well past its expected token range" | Once per prompt, the moment tokens pass 1.5 times the high end of the token range. For a range of 24k–90k, that is 135k. |
-| "The context window is 83% full" | When the context fills to 80% or more. It repeats only after the fill has dropped below 80% and climbed back. |
+| "Smart-zone caution: context 122k of 150k. Plan a stop: …" | When the context first climbs past the smart-zone caution (see "The smart zone"). |
+| "Out of the smart zone: context 151k is past 150k. At the next phase boundary, /compact or /clear" | When the context first climbs past the smart-zone limit. Both repeat only after the context has dropped below the caution and climbed back. |
 | "Agent failed: <description>" | Each time an agent's run ends without an answer. |
 | "Check failed: tests" | When a check (tests, lint, types or build) starts failing; several are listed together (see "Checks"). |
 | "The five-hour limit is on course to run out in about 1h20m, 1h20m before it resets" | Once for each usage window, when its pace puts it on course to run out before it resets (see "Usage limits"). |

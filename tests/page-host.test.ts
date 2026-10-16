@@ -14,6 +14,7 @@ const TODOS = [
 ] as const
 
 const PAGE = '/work/atlas/.polis/city.html'
+const FULL = '/work/atlas/.polis/city-full.html'
 const IGNORE = '/work/atlas/.polis/.gitignore'
 
 type Disk = {
@@ -30,13 +31,21 @@ type Disk = {
 const plain = (path: string): string => path.replace(/^[A-Za-z]:/, '').replace(/\\/g, '/')
 
 // A session in /work/atlas, outside a repository, over a disk in memory.
-const disk = (on: On, isWritable = true): Disk => {
+const disk = (on: On, isWritable = true, kept?: Record<string, unknown>): Disk => {
   const writes: Disk['writes'] = []
   const files = new Map<string, string>()
   const logs: string[] = []
   const opened: string[] = []
   const clock = mock.clock(on)
-  mock.store(on)
+  if (kept === undefined) mock.store(on)
+  else {
+    on('store.get', (_, e) => ({ value: kept[e.key] }))
+    on('store.set', (_, e) => {
+      kept[e.key] = e.value
+
+      return { value: undefined }
+    })
+  }
   on('fs.exists', (_, e) => ({ value: files.has(plain(e.path)) }))
   // With nothing answering `fs.write` the call rejects, as a write refused does.
   if (isWritable) {
@@ -83,7 +92,7 @@ test('a session writes the city under the project root, and keeps the folder out
   const world = disk(on)
   await $.session.start(START)
 
-  expect(world.writes.map(write => write.path)).toEqual([IGNORE, PAGE])
+  expect(world.writes.map(write => write.path)).toEqual([IGNORE, PAGE, FULL])
   expect(world.files.get(IGNORE)).toBe('*\n')
   expect(world.files.get(PAGE)).toStartWith('<!doctype html>')
   expect(world.files.get(PAGE)).toContain('<meta http-equiv="refresh" content="3">')
@@ -97,7 +106,7 @@ test('an idle board writes nothing more, and a changed one writes the new pictur
   expect(pages(world)).toHaveLength(1)
 
   await world.clock.advance(10_000)
-  expect(world.writes).toHaveLength(2)
+  expect(world.writes).toHaveLength(3)
 
   await $.tool.call({ tool: 'TodoWrite', tool_use_id: 't1', todos: [...TODOS] })
   await world.clock.advance(2000)
@@ -119,7 +128,7 @@ test('a .gitignore already in the folder is left as it is', async ($, on) => {
   world.files.set(IGNORE, 'city.html\n')
   await $.session.start(START)
 
-  expect(world.writes.map(write => write.path)).toEqual([PAGE])
+  expect(world.writes.map(write => write.path)).toEqual([PAGE, FULL])
   expect(world.files.get(IGNORE)).toBe('city.html\n')
 })
 
@@ -150,6 +159,49 @@ test('/city page answers with the path and its file URL, and opens no pane', asy
   expect(ran.text).toContain('Paste the file URL')
   expect(world.files.get(PAGE)).toContain('<meta http-equiv="refresh"')
   expect(world.opened).toEqual([])
+})
+
+test('/city page names the full city’s page as well', async ($, on) => {
+  const world = disk(on)
+  await $.session.start(START)
+  world.files.delete(FULL)
+  const ran = await $.command.run({ command: 'city', args: 'page', ...TYPED })
+
+  expect(ran.text).toContain(FULL)
+  expect(ran.text).toContain('file:///work/atlas/.polis/city-full.html')
+  expect(world.files.get(FULL)).toContain('<meta http-equiv="refresh"')
+})
+
+test('the two pages link to each other, and the full one carries the archive', async ($, on) => {
+  const world = disk(on, true, {
+    'archive:/work/atlas': {
+      entries: [{ id: 'old/1', subject: 'Lay the roads', area: 'roads', doneAt: 1, sessionId: 'old' }],
+      folded: { roads: 40 },
+    },
+  })
+  await $.session.start(START)
+
+  const current = world.files.get(PAGE) ?? ''
+  const full = world.files.get(FULL) ?? ''
+  expect(current).toContain('<a href="city-full.html">full city</a>')
+  expect(full).toContain('<a href="city.html">current city</a>')
+  expect(current).not.toContain('Lay the roads')
+  expect(full).toContain('Lay the roads · archived')
+  expect(full).toContain('old town · 40 done')
+})
+
+test('the full page is written again when the board changes, and not otherwise', async ($, on) => {
+  const world = disk(on)
+  await $.session.start(START)
+  const fulls = (): string[] => world.writes.filter(write => write.path === FULL).map(write => write.text)
+  expect(fulls()).toHaveLength(1)
+
+  await world.clock.advance(10_000)
+  expect(fulls()).toHaveLength(1)
+
+  await $.tool.call({ tool: 'TodoWrite', tool_use_id: 't1', todos: [...TODOS] })
+  await world.clock.advance(2000)
+  expect(fulls()).toHaveLength(2)
 })
 
 test('a folder that cannot be written is reported once, not at every tick', async ($, on) => {

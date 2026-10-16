@@ -4,7 +4,7 @@ import { fitCity, renderCity } from '../hooks/city'
 import type { CityInput, CityLayout } from '../hooks/city'
 import { avatarSvg } from '../hooks/icons'
 import { agent, base, busy, full, proc, scenes, small, states, task } from '../tools/scenes'
-import type { Check, Task, Wait } from '../types'
+import type { Archive, ArchiveEntry, Check, Task, Wait } from '../types'
 
 const LAYOUTS: readonly CityLayout[] = ['avenue', 'column', 'wide']
 
@@ -140,4 +140,69 @@ test('an agent card is still when asked', () => {
 test('agents and background work stand in a still city too', () => {
   const input: CityInput = { ...busy, procs: [proc('p', 'shell', 'npm run dev')], agents: [agent('a', 'Explore', 'Look', { search: 3 })], isStill: true }
   expect(renderCity(input)).toContain('Explore')
+})
+
+// ------------------------------------------------------------- the full city
+
+const archived = (area: string, count: number, from = 0, rest: Partial<ArchiveEntry> = {}): ArchiveEntry[] =>
+  Array.from({ length: count }, (_, k) => ({
+    id: `old0000${area}/${from + k}`,
+    subject: `${area} archived ${from + k}`,
+    area,
+    doneAt: 1_000 + from + k,
+    sessionId: 'old00000',
+    ...rest,
+  }))
+
+const archiveOf = (entries: ArchiveEntry[], folded: { [area: string]: number } = {}): Archive => ({ entries, folded })
+
+test('archived work stands as quieter buildings with no pennant or verdict mark', () => {
+  const svg = renderCity(city([], { archive: archiveOf(archived('api', 1, 0, { verdict: 'passed' })) }))
+  expect(svg).toContain('api archived 0 · archived')
+  expect(svg).not.toContain('l6 2.2l-6 2.2z')
+  expect(svg).not.toContain('stroke-width="1.7" stroke-linecap="round"')
+})
+
+test('a district shows its newest 24 archived tasks, and the rest and the folded counts as an old town', () => {
+  const svg = renderCity(city([], { archive: archiveOf(archived('api', 30), { api: 282 }) }))
+  // Newest first: the six oldest are in the old town, not drawn singly.
+  expect(svg).toContain('api archived 29 · archived')
+  expect(svg).toContain('api archived 6 · archived')
+  expect(svg).not.toContain('api archived 5 · archived')
+  expect(svg).toContain('>old town · 288 done</text>')
+})
+
+test('an old town grows with its count', () => {
+  const small = renderCity(city([], { archive: archiveOf([], { api: 3 }) }))
+  const large = renderCity(city([], { archive: archiveOf([], { api: 3000 }) }))
+  expect(small).toContain('>old town · 3 done</text>')
+  expect(large).toContain('>old town · 3,000 done</text>')
+  expect(small).not.toBe(large)
+})
+
+test('a district only the archive knows is laid out like any other', () => {
+  const svg = renderCity(city(finished(), { archive: archiveOf(archived('docs', 2)) }))
+  expect(svg).toContain('>DOCS  0/0</text>')
+  expect(svg).toContain('>API  1/1</text>')
+})
+
+test('the current city draws no archive, and the moon and fireworks count only the board', () => {
+  const board = finished()
+  const current = renderCity(city(board))
+  const whole = renderCity(city(board, { archive: archiveOf(archived('api', 5)) }))
+  expect(current).not.toContain('· archived')
+  expect(whole).toContain('Moon: the project is 100% done')
+  // Every task on the board done: fireworks in both views.
+  expect(whole.match(/pathLength="48"/g)?.length).toBe(current.match(/pathLength="48"/g)?.length)
+})
+
+test('a full city with a large archive fits the Svg limit in every layout', () => {
+  const areas = ['api', 'web', 'docs', 'cli', 'core', 'infra', 'auth', 'db', 'ui', 'ops', 'qa']
+  const entries = areas.flatMap(area => archived(area, 200))
+  const folded = Object.fromEntries(areas.map(area => [area, 5000]))
+  for (const layout of LAYOUTS) {
+    const svg = renderCity({ ...full, archive: archiveOf(entries, folded) }, layout, 1.6)
+    expect(svg.length).toBeLessThan(131072)
+    expect(svg).toContain('old town')
+  }
 })

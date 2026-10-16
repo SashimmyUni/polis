@@ -65,9 +65,10 @@ import {
   zoneToast,
 } from './logic'
 import type { EstimateMode, SavedTasks } from './logic'
+import { EMPTY_ARCHIVE, asArchive, offBoard, syncArchive } from './archive'
 import { asProjectLog, projectHeadline, projectLines, sessionRecord, upsertSession } from './projectlog'
 import { REPORT_FILE, reportOf } from './report'
-import { PAGE_REFRESH_SECONDS, cityPage } from './page'
+import { PAGE_FILES, PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
 import { band, pane, stripElements, summary } from './views'
@@ -127,6 +128,7 @@ const ui = atom({ plugin: 'polis', key: 'ui' } as const, {
   view: 'overview',
   isBandHidden: false,
   hasOpened: false,
+  cityView: 'current',
 })
 const activity = atom({ plugin: 'polis', key: 'activity' } as const, [])
 const files = atom({ plugin: 'polis', key: 'files' } as const, [])
@@ -135,6 +137,7 @@ const limits = atom({ plugin: 'polis', key: 'limits' } as const, [])
 const checks = atom({ plugin: 'polis', key: 'checks' } as const, [])
 const git = atom({ plugin: 'polis', key: 'git' } as const, null)
 const log = atom({ plugin: 'polis', key: 'log' } as const, null)
+const archive = atom({ plugin: 'polis', key: 'archive' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
 
 const GUIDANCE = {
@@ -430,6 +433,17 @@ const readGit = async ($: EngineInterface, root: string): Promise<void> => {
   }
 }
 
+// The project's archive brought in line with the board. The stored archive
+// is read again just before, so that a parallel session's work is not lost.
+const saveArchive = async ($: EngineInterface, here: Here, board: readonly Task[]): Promise<void> => {
+  if (here.root === '' || here.id === '') return
+  const key = `archive:${here.root}`
+  const stored = asArchive(await $.store.get(key))
+  const next = syncArchive(stored, board, here.id)
+  await update($, archive, () => next)
+  if (next !== stored) await $.store.set(key, next)
+}
+
 // The board as the sessions that follow will find it.
 const saveTasks = async ($: EngineInterface, here: Here): Promise<void> => {
   if (here.root === '') return
@@ -437,6 +451,7 @@ const saveTasks = async ($: EngineInterface, here: Here): Promise<void> => {
   const list = await update($, tasks, value => stampDone(value, at))
   const saved: SavedTasks = { sessionId: here.id, at, tasks: list }
   await $.store.set(`tasks:${here.root}`, saved)
+  await saveArchive($, here, list)
 }
 
 // This session's record, written into the project's log. The stored log is
@@ -537,11 +552,18 @@ const stopTurn = async ($: EngineInterface): Promise<void> => {
 }
 
 const openAt = async ($: EngineInterface, view: ViewName | undefined): Promise<UiOpenResult> => {
+  // A pane that was closed opens on the current city, as does one whose
+  // state the engine cannot tell.
+  const isOpen = await $.ui.panes().then(
+    open => open.some(one => one.id === PANE),
+    () => false,
+  )
   await update($, ui, value => ({
     ...value,
     isBandHidden: false,
     hasOpened: true,
     view: view ?? value.view,
+    cityView: isOpen ? value.cityView : 'current',
   }))
 
   return openPane($)
@@ -549,6 +571,8 @@ const openAt = async ($: EngineInterface, view: ViewName | undefined): Promise<U
 
 const actionsOf = ($: EngineInterface): Actions => ({
   setView: view => update($, ui, value => ({ ...value, view })),
+  toggleCity: () =>
+    update($, ui, value => ({ ...value, cityView: value.cityView === 'full' ? 'current' : 'full' })),
   openCity: () => openAt($, 'city'),
   hideBand: async () => {
     await update($, ui, value => ({ ...value, isBandHidden: true }))
@@ -571,6 +595,7 @@ const load = async (
 ): Promise<Model> => {
   await read($, tick)
   const record = await read($, project)
+  const board = await read($, tasks)
 
   return {
     now: await $.clock.now(),
@@ -584,7 +609,8 @@ const load = async (
     checks: await read($, checks),
     git: await read($, git),
     log: await read($, log),
-    tasks: await read($, tasks),
+    tasks: board,
+    archived: offBoard((await read($, archive)) ?? EMPTY_ARCHIVE, board, session.sessionId),
     agents: await read($, agents),
     procs: await read($, procs),
     turn: await read($, turn),
@@ -598,36 +624,44 @@ const load = async (
   }
 }
 
-// The page on disk: what was last written and where, and whether a failure
-// to write it has been said already.
-let written = { path: '', text: '' }
+// The pages on disk: what was last written to each, and whether a failure
+// to write them has been said already.
+let written = new Map<string, string>()
 let hasSaidPage = false
 
-// Writes the city where a browser left open finds it, and only when the
-// picture changed: an idle session writes nothing. Asked for outright (a
-// session starting, `/city page`), it writes whatever stands there, so a
-// file since deleted comes back.
+// Writes the two cities, current and full, where a browser left open finds
+// them, each only when its picture changed: an idle session writes nothing.
+// Asked for outright (a session starting, `/city page`), it writes whatever
+// stands there, so a file since deleted comes back.
 const writePage = async (
   $: EngineInterface,
   session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
   root: string,
   isAsked: boolean,
-): Promise<string> => {
+): Promise<{ current: string; full: string }> => {
   const model = await load($, session, 80)
   const name =
     model.project !== null && model.project.name !== '' ? model.project.name : projectName(root)
-  const text = cityPage(model, name)
-  const path = under(root, '.polis', 'city.html')
-  if (!isAsked && written.path === path && written.text === text) return path
+  const paths = {
+    current: under(root, '.polis', PAGE_FILES.current),
+    full: under(root, '.polis', PAGE_FILES.full),
+  }
+  const texts = [
+    [paths.current, cityPage(model, name)],
+    [paths.full, cityPage({ ...model, archive: model.archived ?? EMPTY_ARCHIVE }, name)],
+  ] as const
   // The folder keeps itself out of `git status`.
   const ignore = under(root, '.polis', '.gitignore')
-  if ((isAsked || written.path !== path) && !(await $.fs.exists(ignore))) {
+  if ((isAsked || !written.has(paths.current)) && !(await $.fs.exists(ignore))) {
     await $.fs.write(ignore, '*\n')
   }
-  await $.fs.write(path, text)
-  written = { path, text }
+  for (const [path, text] of texts) {
+    if (!isAsked && written.get(path) === text) continue
+    await $.fs.write(path, text)
+    written.set(path, text)
+  }
 
-  return path
+  return paths
 }
 
 // The mod's own write, at the start and on its timer: a folder that cannot
@@ -765,6 +799,8 @@ export const register: Register = (on, options) => {
         const carried = carryTasks(await $.store.get(`tasks:${root}`), sessionId, now)
         if (carried.length > 0) await update($, tasks, () => carried)
       }
+      // The finished work already on the board starts the archive.
+      await saveArchive($, here, await read($, tasks))
       await saveSession($, here, false)
       void readGit($, root)
       await refresh($, false)
@@ -950,12 +986,17 @@ export const register: Register = (on, options) => {
       }
       try {
         const root = pageRoot ?? (await read($, project))?.root ?? (await $.session.cwd())
-        const path = await writePage($, session(), root, true)
+        const paths = await writePage($, session(), root, true)
 
         return {
           text: [
-            `The city is written to ${path}`,
-            fileUrl(path),
+            `The city is written to ${paths.current}`,
+            fileUrl(paths.current),
+            '',
+            `The full city, with everything the project has finished, is written to ${paths.full}`,
+            fileUrl(paths.full),
+            '',
+            'Each page links to the other in its header.',
             '',
             'To keep it open in VS Code beside the terminal, once:',
             '1. Open the Command Palette (Ctrl+Shift+P, or Cmd+Shift+P on a Mac).',

@@ -22,6 +22,7 @@ const STYLE =
   `header span{color:${C.muted};white-space:nowrap}` +
   `header .needs,header .out{color:${C.fail};font-weight:600}` +
   `header .caution{color:${C.run}}` +
+  `header a{color:${C.agent}}` +
   `p{margin:0;color:${C.muted};flex-basis:100%}` +
   `svg{display:block;width:100%;height:auto}`
 
@@ -52,8 +53,16 @@ const facts = (m: CityInput): string => {
   return spans.join('')
 }
 
+// The two pages on disk: the current city, and the full one with the archive.
+export const PAGE_FILES = { current: 'city.html', full: 'city-full.html' } as const
+
+// The way to the other page, at the end of the header.
+const other = (isFull: boolean): string =>
+  isFull ? `<a href="${PAGE_FILES.current}">current city</a>` : `<a href="${PAGE_FILES.full}">full city</a>`
+
 // One whole document. The same input always gives the same text (the drawing's moving parts are set to a fixed clock,
-// nothing random), so the caller can skip a write that would change nothing.
+// nothing random), so the caller can skip a write that would change nothing. An
+// input with an archive is the full city's page.
 export const cityPage = (m: CityInput, name: string): string =>
   `<!doctype html>\n` +
   `<html lang="en">\n` +
@@ -62,11 +71,11 @@ export const cityPage = (m: CityInput, name: string): string =>
   `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
   `<meta name="color-scheme" content="dark">\n` +
   `<meta http-equiv="refresh" content="${PAGE_REFRESH_SECONDS}">\n` +
-  `<title>Polis · ${esc(name)}</title>\n` +
+  `<title>Polis · ${esc(name)}${m.archive === undefined ? '' : ' · full city'}</title>\n` +
   `<style>${STYLE}</style>\n` +
   `</head>\n` +
   `<body>\n` +
-  `<header><h1>${esc(name)}</h1>${facts(m)}<p>${esc(cityAlt(m))}</p></header>\n` +
+  `<header><h1>${esc(name)}</h1>${facts(m)}<span>${other(m.archive !== undefined)}</span><p>${esc(cityAlt(m))}</p></header>\n` +
   `<main>${fluid(renderCity({ ...m, now: 0 }, 'avenue'))}</main>\n` +
   `</body>\n` +
   `</html>\n`
