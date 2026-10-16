@@ -65,14 +65,10 @@ Or from a local copy: name its folder in `CLAUDE_CODE_PLUGIN_DIRS`, in the `env`
 `claude` here means the Claude Code binary (on this machine: `%APPDATA%\Claude\claude-code\<version>\<hash>\claude.exe`).
 
 ```bash
-claude plugin validate .
+node tools/check.ts
 ```
 
-```bash
-claude plugin test .
-```
-
-`.github/workflows/ci.yml` runs the same two commands on pushes to `main` and on pull requests. It has not been run on a runner: whether the published Claude Code package carries `plugin validate` and `plugin test`, and whether they run without signing in, is unconfirmed.
+The check command validates the mod strictly (`claude plugin validate --strict .`), then runs its tests (`claude plugin test .`). It stops at the first stage that fails, names it and prints that stage's full output; when everything passes it prints one line per stage. `.github/workflows/ci.yml` runs the same command on pushes to `main` and on pull requests.
 
 Every call on the engine (`$`) and every piece of state lives in `hooks/register.tsx`; the validator requires it. The other files under `hooks/` are pure: `logic.ts` (tracking, estimates, usage-limit forecasts, carried tasks), `checks.ts` (what counts as a test, lint, type or build run), `codemap.ts` (code areas, git), `verify.ts` (verdicts), `projectlog.ts` (the project's sessions), `archive.ts` (every finished task, for the full city), `page.ts` (the pages on disk), `report.ts` (the Markdown report), `views.tsx` (band and pane), `city.ts` and `icons.ts` (the drawings), `theme.ts` (palette). `tools/preview.ts` draws the city for made-up sessions into an HTML page for judging its look in a browser; `tools/measure.ts` reports at how many buildings a large city starts to shed detail (`node --import ./tools/ts-resolve.mjs tools/measure.ts`).
 
