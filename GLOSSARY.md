@@ -138,3 +138,7 @@ _Avoid_: page on disk, dashboard
 **Full city page**:
 The city page of the full city, linked to and from the city page.
 _Avoid_: history page, page on disk
+
+**Session report**:
+The session written up as Markdown, short enough to paste into a pull request or a stand-up note: what was done, checked and changed.
+_Avoid_: summary, board text, whole project
