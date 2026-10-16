@@ -70,6 +70,14 @@ node tools/check.ts
 
 The check command validates the mod strictly (`claude plugin validate --strict .`), then runs its tests (`claude plugin test .`). It stops at the first stage that fails, names it and prints that stage's full output; when everything passes it prints one line per stage. `.github/workflows/ci.yml` runs the same command on pushes to `main` and on pull requests.
 
+A tracked pre-commit hook in `.githooks/` runs the same command and refuses the commit when it fails. Turn it on once per clone; it then applies to every worktree of that clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`git commit --no-verify` skips it for one commit.
+
 Every call on the engine (`$`) and every piece of state lives in `hooks/register.tsx`; the validator requires it. The other files under `hooks/` are pure: `logic.ts` (tracking, estimates, usage-limit forecasts, carried tasks), `checks.ts` (what counts as a test, lint, type or build run), `codemap.ts` (code areas, git), `verify.ts` (verdicts), `projectlog.ts` (the project's sessions), `archive.ts` (every finished task, for the full city), `page.ts` (the pages on disk), `report.ts` (the Markdown report), `views.tsx` (band and pane), `city.ts` and `icons.ts` (the drawings), `theme.ts` (palette). `tools/preview.ts` draws the city for made-up sessions into an HTML page for judging its look in a browser; `tools/measure.ts` reports at how many buildings a large city starts to shed detail (`node --import ./tools/ts-resolve.mjs tools/measure.ts`).
 
 The mod records the room each surface gives its band and pane under the `rooms` key of its store, which is the first thing to read when a drawing looks wrong somewhere.
