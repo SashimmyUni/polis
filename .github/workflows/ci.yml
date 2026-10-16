@@ -2,6 +2,18 @@
 # a local check can't disagree. The published Claude Code
 # package carries `plugin validate` and `plugin test`, and both run on a
 # runner without signing in.
+#
+# The type-check stage needs .claude-plugin/types/ (gitignored), which the
+# engine writes when it loads the mod. Confirmed on an ubuntu runner, signed
+# out (Claude Code 2.1.301):
+# - Print mode with CLAUDE_CODE_PLUGIN_DIR_WATCH=1 writes the folder while
+#   loading the mod, then exits 1 with "Not logged in". That exit is ignored;
+#   the step fails only if the folder is missing.
+# - Without the variable, print mode loads the mod but writes nothing, and an
+#   interactive load under a pseudo-terminal stops at the first-run theme and
+#   sign-in screens.
+# - On Linux the engine leaves Glob and Grep out of its tool types unless they
+#   are asked for, and the tests call Grep, so --allowedTools asks for them.
 name: CI
 
 on:
@@ -19,5 +31,9 @@ jobs:
           node-version: 22
       - name: Install the Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code
+      - name: Have the engine write the mod's types
+        run: |
+          CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude -p ok --plugin-dir . --allowedTools Glob,Grep || true
+          test -f .claude-plugin/types/tsconfig.json
       - name: Check the mod
         run: node tools/check.ts

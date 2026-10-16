@@ -29,7 +29,9 @@ for (const stage of STAGES) {
       `check failed at the ${stage.name} stage: the engine-generated types are missing (${GENERATED_TYPES}).\n` +
         'Claude Code writes .claude-plugin/types/ when an interactive session loads the mod from this folder\n' +
         '(for example `claude --plugin-dir .`, or the desktop app with this folder in CLAUDE_CODE_PLUGIN_DIRS).\n' +
-        'Print mode (`claude -p`) does not write them. If another copy of polis loads first, this folder is skipped;\n' +
+        'Print mode writes them only with CLAUDE_CODE_PLUGIN_DIR_WATCH=1, signed in or not, as CI does:\n' +
+        '`CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude -p ok --plugin-dir . --allowedTools Glob,Grep` (Glob and Grep, so the\n' +
+        'types have them on Linux too). If another copy of polis loads first, this folder is skipped;\n' +
         'copying .claude-plugin/types/ from a copy of the mod that has it also works.',
     )
     process.exit(1)
