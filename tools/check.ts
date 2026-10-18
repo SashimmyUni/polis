@@ -5,15 +5,20 @@
 // so anything that guards the mod should call it rather than repeat it.
 //   node tools/check.ts
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-// precondition, when a stage has one, runs before its command and returns why
-// the stage cannot run, or nothing when it can.
-type Stage = { name: string; command: string; precondition?: () => string | undefined }
+// skip: the stage has nothing to do. precondition, when a stage has one,
+// runs before its command and returns why the stage cannot run, or nothing
+// when it can.
+type Stage = { name: string; command: string; skip?: () => boolean; precondition?: () => string | undefined }
+
+const LOCKFILE = join(root, 'package-lock.json')
+// npm's own record of what node_modules holds, rewritten on every install.
+const INSTALLED = join(root, 'node_modules', '.package-lock.json')
 
 const GENERATED_TYPES = join(root, '.claude-plugin', 'types', 'tsconfig.json')
 
@@ -30,19 +35,29 @@ const typesPresent = (): string | undefined =>
       'copying .claude-plugin/types/ from a copy of the mod that has it also works.'
 
 const STAGES: Stage[] = [
+  // The pinned TypeScript and Node types of package.json. Only when
+  // node_modules is missing or older than the lockfile, so a check that has
+  // already installed does not reinstall.
+  {
+    name: 'install',
+    command: 'npm ci --no-audit --no-fund',
+    skip: () => existsSync(INSTALLED) && statSync(INSTALLED).mtimeMs >= statSync(LOCKFILE).mtimeMs,
+  },
   // Strict, so warnings the runtime tolerates still fail.
   { name: 'validation', command: 'claude plugin validate --strict .' },
-  // Against the API types the engine writes beside the mod (gitignored), with
-  // a pinned TypeScript from npx so no global install is needed.
-  {
-    name: 'type-check',
-    command: 'npx --yes --package typescript@5.9.3 -- tsc --noEmit -p tsconfig.json',
-    precondition: typesPresent,
-  },
+  // hooks/, types/ and tests/ against the API types the engine writes beside
+  // the mod (gitignored).
+  { name: 'type-check', command: 'npx --no -- tsc --noEmit -p tsconfig.json', precondition: typesPresent },
+  // tools/ against Node's types, kept apart so they don't leak into hooks/.
+  { name: 'tools type-check', command: 'npx --no -- tsc --noEmit -p tools/tsconfig.json', precondition: typesPresent },
   { name: 'tests', command: 'claude plugin test .' },
 ]
 
 for (const stage of STAGES) {
+  if (stage.skip?.()) {
+    console.log(`ok  ${stage.name} (up to date)`)
+    continue
+  }
   const unmet = stage.precondition?.()
   if (unmet) {
     console.error(`check failed at the ${stage.name} stage: ${unmet}`)

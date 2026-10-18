@@ -68,7 +68,7 @@ Or from a local copy: name its folder in `CLAUDE_CODE_PLUGIN_DIRS`, in the `env`
 node tools/check.ts
 ```
 
-The check command runs three stages: validation, type-check and tests. It stops at the first stage that fails, names it and prints that stage's full output; `tools/check.ts`'s header and stage list say what each one runs. The type-check needs the engine-generated `.claude-plugin/types/` (gitignored); when it is missing, the check command's message says how to produce it. `.github/workflows/ci.yml` has the engine write those types, then runs the check command, on pushes to `main` and on pull requests.
+The check command runs five stages: install (the pinned TypeScript and Node types of `package.json`, only when `node_modules` is missing or out of date; the mod itself has no dependencies), validation, type-check (`hooks/`, `types/` and `tests/` against the engine's types), tools type-check (`tools/` against Node's types) and tests. It stops at the first stage that fails, names it and prints that stage's full output; `tools/check.ts`'s header and stage list say what each one runs. Both type-checks need the engine-generated `.claude-plugin/types/` (gitignored); when it is missing, the check command's message says how to produce it. `.github/workflows/ci.yml` has the engine write those types, then runs the check command, on pushes to `main` and on pull requests.
 
 A tracked pre-commit hook in `.githooks/` runs the same command and refuses the commit when it fails. Turn it on once per clone; it then applies to every worktree of that clone:
 
