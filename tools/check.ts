@@ -5,47 +5,54 @@
 // so anything that guards the mod should call it rather than repeat it.
 //   node tools/check.ts
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-// precondition, when a stage has one, runs before its command and returns why
-// the stage cannot run, or nothing when it can.
-type Stage = { name: string; command: string; precondition?: () => string | undefined }
+// skip: the stage has nothing to do. generatedTypes: it needs the types the
+// engine writes beside the mod.
+type Stage = { name: string; command: string; skip?: () => boolean; generatedTypes?: boolean }
 
-const GENERATED_TYPES = join(root, '.claude-plugin', 'types', 'tsconfig.json')
-
-const typesPresent = (): string | undefined =>
-  existsSync(GENERATED_TYPES)
-    ? undefined
-    : `the engine-generated types are missing (${GENERATED_TYPES}).\n` +
-      'Claude Code writes .claude-plugin/types/ when an interactive session loads the mod from this folder\n' +
-      '(for example `claude --plugin-dir .`, or the desktop app with this folder in CLAUDE_CODE_PLUGIN_DIRS).\n' +
-      'Print mode writes them only with CLAUDE_CODE_PLUGIN_DIR_WATCH=1 (confirmed signed out on an ubuntu\n' +
-      'runner), as CI does:\n' +
-      '`CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude -p ok --plugin-dir . --allowedTools Glob,Grep` (Glob and Grep, so the\n' +
-      'types have them on Linux too). If another copy of polis loads first, this folder is skipped;\n' +
-      'copying .claude-plugin/types/ from a copy of the mod that has it also works.'
+const LOCKFILE = join(root, 'package-lock.json')
+// npm's own record of what node_modules holds, rewritten on every install.
+const INSTALLED = join(root, 'node_modules', '.package-lock.json')
 
 const STAGES: Stage[] = [
+  // The pinned TypeScript and Node types of package.json. Only when
+  // node_modules is missing or older than the lockfile, so a check that has
+  // already installed does not reinstall.
+  {
+    name: 'install',
+    command: 'npm ci --no-audit --no-fund',
+    skip: () => existsSync(INSTALLED) && statSync(INSTALLED).mtimeMs >= statSync(LOCKFILE).mtimeMs,
+  },
   // Strict, so warnings the runtime tolerates still fail.
   { name: 'validation', command: 'claude plugin validate --strict .' },
-  // Against the API types the engine writes beside the mod (gitignored), with
-  // a pinned TypeScript from npx so no global install is needed.
-  {
-    name: 'type-check',
-    command: 'npx --yes --package typescript@5.9.3 -- tsc --noEmit -p tsconfig.json',
-    precondition: typesPresent,
-  },
+  // hooks/, types/ and tests/ against the API types the engine writes beside
+  // the mod (gitignored).
+  { name: 'type-check', command: 'npx --no -- tsc --noEmit -p tsconfig.json', generatedTypes: true },
+  // tools/ against Node's types, kept apart so they don't leak into hooks/.
+  { name: 'tools type-check', command: 'npx --no -- tsc --noEmit -p tools/tsconfig.json', generatedTypes: true },
   { name: 'tests', command: 'claude plugin test .' },
 ]
 
 for (const stage of STAGES) {
-  const unmet = stage.precondition?.()
-  if (unmet) {
-    console.error(`check failed at the ${stage.name} stage: ${unmet}`)
+  if (stage.skip?.()) {
+    console.log(`ok  ${stage.name} (up to date)`)
+    continue
+  }
+  if (stage.generatedTypes && !existsSync(GENERATED_TYPES)) {
+    console.error(
+      `check failed at the ${stage.name} stage: the engine-generated types are missing (${GENERATED_TYPES}).\n` +
+        'Claude Code writes .claude-plugin/types/ when an interactive session loads the mod from this folder\n' +
+        '(for example `claude --plugin-dir .`, or the desktop app with this folder in CLAUDE_CODE_PLUGIN_DIRS).\n' +
+        'Print mode writes them only with CLAUDE_CODE_PLUGIN_DIR_WATCH=1, signed in or not, as CI does:\n' +
+        '`CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude -p ok --plugin-dir . --allowedTools Glob,Grep` (Glob and Grep, so the\n' +
+        'types have them on Linux too). If another copy of polis loads first, this folder is skipped;\n' +
+        'copying .claude-plugin/types/ from a copy of the mod that has it also works.',
+    )
     process.exit(1)
   }
   const started = Date.now()
