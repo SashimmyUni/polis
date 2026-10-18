@@ -18,7 +18,7 @@ name: CI
 
 on:
   push:
-    branches: [main, claude/check-command-fixes]
+    branches: [main]
   pull_request:
 
 jobs:
