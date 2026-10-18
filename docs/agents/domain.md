@@ -15,8 +15,6 @@ Single-context repo:
 /
 ├── GLOSSARY.md
 ├── docs/adr/
-│   ├── 0001-smart-zone-note-rides-the-prompt.md
-│   └── 0002-archive-folds-into-old-town-counts.md
 ├── hooks/
 └── tests/
 ```

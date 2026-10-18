@@ -1,14 +1,14 @@
-# Runs the check command (tools/check.ts), the same one run by hand, so CI and
-# a local check can't disagree. The published Claude Code
-# package carries `plugin validate` and `plugin test`, and both run on a
-# runner without signing in.
+# Has the engine write the mod's types, then runs the check command
+# (tools/check.ts), the same one run by hand, so CI and a local check can't
+# disagree. The published Claude Code package carries `plugin validate` and
+# `plugin test`, and both run on a runner without signing in.
 #
 # The type-check stage needs .claude-plugin/types/ (gitignored), which the
 # engine writes when it loads the mod. Confirmed on an ubuntu runner, signed
-# out (Claude Code 2.1.301):
+# out (Claude Code 2.1.301, the version pinned below):
 # - Print mode with CLAUDE_CODE_PLUGIN_DIR_WATCH=1 writes the folder while
-#   loading the mod, then exits 1 with "Not logged in". That exit is ignored;
-#   the step fails only if the folder is missing.
+#   loading the mod, then exits 1 with "Not logged in". Only that failure is
+#   tolerated, and the step still fails if the folder is missing.
 # - Without the variable, print mode loads the mod but writes nothing, and an
 #   interactive load under a pseudo-terminal stops at the first-run theme and
 #   sign-in screens.
@@ -18,7 +18,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/check-command-fixes]
   pull_request:
 
 jobs:
@@ -30,10 +30,13 @@ jobs:
         with:
           node-version: 22
       - name: Install the Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
+        run: npm install -g @anthropic-ai/claude-code@2.1.301
       - name: Have the engine write the mod's types
         run: |
-          CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude -p ok --plugin-dir . --allowedTools Glob,Grep || true
+          if ! out=$(CLAUDE_CODE_PLUGIN_DIR_WATCH=1 claude -p ok --plugin-dir . --allowedTools Glob,Grep 2>&1); then
+            echo "$out"
+            case "$out" in *"Not logged in"*) ;; *) exit 1 ;; esac
+          fi
           test -f .claude-plugin/types/tsconfig.json
       - name: Check the mod
         run: node tools/check.ts
