@@ -1,0 +1,13 @@
+{
+  // The development tools run under Node, so they are checked against Node's
+  // types (from package.json) and nothing else; the files under hooks/ they
+  // import are checked here too. The root tsconfig.json keeps Node out of
+  // hooks/, which runs in the engine, and the engine's own declarations out of
+  // here, where some (URL) clash with Node's.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "typeRoots": ["../node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": ["."]
+}

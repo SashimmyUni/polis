@@ -4,27 +4,47 @@
 // else, so anything that guards the mod should call it rather than repeat it.
 //   node tools/check.ts
 import { spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-type Stage = { name: string; command: string }
+// skip: the stage has nothing to do. generatedTypes: it needs the types the
+// engine writes beside the mod.
+type Stage = { name: string; command: string; skip?: () => boolean; generatedTypes?: boolean }
+
+const LOCKFILE = join(root, 'package-lock.json')
+// npm's own record of what node_modules holds, rewritten on every install.
+const INSTALLED = join(root, 'node_modules', '.package-lock.json')
 
 const STAGES: Stage[] = [
+  // The pinned TypeScript and Node types of package.json. Only when
+  // node_modules is missing or older than the lockfile, so a check that has
+  // already installed does not reinstall.
+  {
+    name: 'install',
+    command: 'npm ci --no-audit --no-fund',
+    skip: () => existsSync(INSTALLED) && statSync(INSTALLED).mtimeMs >= statSync(LOCKFILE).mtimeMs,
+  },
   // Strict, so warnings the runtime tolerates still fail.
   { name: 'validation', command: 'claude plugin validate --strict .' },
-  // Against the API types the engine writes beside the mod (gitignored), with
-  // a pinned TypeScript from npx so no global install is needed.
-  { name: 'type-check', command: 'npx --yes --package typescript@5.9.3 -- tsc --noEmit -p tsconfig.json' },
+  // hooks/, types/ and tests/ against the API types the engine writes beside
+  // the mod (gitignored).
+  { name: 'type-check', command: 'npx --no -- tsc --noEmit -p tsconfig.json', generatedTypes: true },
+  // tools/ against Node's types, kept apart so they don't leak into hooks/.
+  { name: 'tools type-check', command: 'npx --no -- tsc --noEmit -p tools/tsconfig.json', generatedTypes: true },
   { name: 'tests', command: 'claude plugin test .' },
 ]
 
 const GENERATED_TYPES = join(root, '.claude-plugin', 'types', 'tsconfig.json')
 
 for (const stage of STAGES) {
-  if (stage.name === 'type-check' && !existsSync(GENERATED_TYPES)) {
+  if (stage.skip?.()) {
+    console.log(`ok  ${stage.name} (up to date)`)
+    continue
+  }
+  if (stage.generatedTypes && !existsSync(GENERATED_TYPES)) {
     console.error(
       `check failed at the ${stage.name} stage: the engine-generated types are missing (${GENERATED_TYPES}).\n` +
         'Claude Code writes .claude-plugin/types/ when an interactive session loads the mod from this folder\n' +
