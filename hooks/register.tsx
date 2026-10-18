@@ -9,6 +9,7 @@ import type {
   RateLimit,
   Task,
   Turn,
+  Ui,
   Usage,
   ViewName,
 } from '../types'
@@ -572,7 +573,7 @@ const openAt = async ($: EngineInterface, view: ViewName | undefined): Promise<U
 const actionsOf = ($: EngineInterface): Actions => ({
   setView: view => update($, ui, value => ({ ...value, view })),
   toggleCity: () =>
-    update($, ui, value => ({ ...value, cityView: value.cityView === 'full' ? 'current' : 'full' })),
+    update($, ui, (value): Ui => ({ ...value, cityView: value.cityView === 'full' ? 'current' : 'full' })),
   openCity: () => openAt($, 'city'),
   hideBand: async () => {
     await update($, ui, value => ({ ...value, isBandHidden: true }))
