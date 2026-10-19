@@ -89,9 +89,8 @@ const headerOf = (input: ReportInput): string[] => {
   const { project } = input
   const git = input.git ?? null
   const name = project === null ? '' : clip(project.name, 60)
-  const phase = project === null ? '' : clip(project.phase, 60)
   const branch = git === null ? '' : git.branch === '' ? 'detached HEAD' : `branch ${git.branch}`
-  const facts = [dayOf(input.now), phase, git === null ? '' : `${branch} (${changeOf(git)})`].filter(
+  const facts = [dayOf(input.now), git === null ? '' : `${branch} (${changeOf(git)})`].filter(
     fact => fact !== '',
   )
 

@@ -244,6 +244,12 @@ export type MilestoneStatus = 'planned' | 'active' | 'done'
 
 export type Milestone = { id: string; title: string; status: MilestoneStatus }
 
+/** HITL work keeps the person close; AFK work runs without them. */
+export type FlowKind = 'HITL' | 'AFK'
+
+/** The phase a flow skill started, its kind, and the next step: in full, and its first move. */
+export type Flow = { phase: string; kind: FlowKind; next: string; first: string }
+
 export type Project = {
   root: string
   name: string
@@ -314,6 +320,7 @@ declare module 'claude-code' {
       log: ProjectLog | null
       archive: Archive | null
       tick: number
+      flow: Flow | null
     }
   }
 }

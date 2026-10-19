@@ -72,6 +72,7 @@ import { REPORT_FILE, reportOf } from './report'
 import { PAGE_FILES, PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
+import { flowOf } from './flow'
 import { band, pane, stripElements, summary } from './views'
 import type { Actions, Model, StripModel } from './views'
 
@@ -140,6 +141,7 @@ const git = atom({ plugin: 'polis', key: 'git' } as const, null)
 const log = atom({ plugin: 'polis', key: 'log' } as const, null)
 const archive = atom({ plugin: 'polis', key: 'archive' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
+const flow = atom({ plugin: 'polis', key: 'flow' } as const, null)
 
 const GUIDANCE = {
   id: 'polis:guidance',
@@ -285,6 +287,19 @@ const say = ($: EngineInterface, where: string, error: unknown): void => {
   $.ui.log(`polis: ${where}: ${String(error)}`)
 }
 
+// The phase a flow skill or command starts; one off the table leaves the
+// phase as it was.
+const startPhase = async ($: EngineInterface, name: string): Promise<void> => {
+  try {
+    const started = flowOf(name)
+    if (started === undefined) return
+    await update($, flow, () => started)
+    await refresh($, false)
+  } catch (error) {
+    say($, 'reading the phase', error)
+  }
+}
+
 const note = async ($: EngineInterface, kind: string, text: string): Promise<void> => {
   const at = await $.clock.now()
   await update($, activity, list => pushActivity(list, { at, kind, text }))
@@ -343,6 +358,9 @@ const loadStrip = async ($: EngineInterface): Promise<StripModel> => ({
   limits: await read($, limits),
   usage: await read($, usage),
   tasks: await read($, tasks),
+  turn: await read($, turn),
+  agents: await read($, agents),
+  flow: await read($, flow),
 })
 
 const rootOf = async ($: EngineInterface): Promise<string> => {
@@ -623,6 +641,7 @@ const load = async (
     ui: await read($, ui),
     activity: await read($, activity),
     files: await read($, files),
+    flow: await read($, flow),
   }
 }
 
@@ -825,6 +844,8 @@ export const register: Register = (on, options) => {
         const { isWorking } = await read($, turn)
         const runs = await read($, agents)
         if (isWorking || runs.some(isLive)) await update($, tick, count => count + 1)
+        // Off the flow, a long turn turns to AFK work on the clock alone.
+        if (isWorking && (await read($, flow)) === null) await refresh($, false)
         if (hasNewRoom) {
           hasNewRoom = false
           await $.store.set('rooms', rooms)
@@ -864,9 +885,31 @@ export const register: Register = (on, options) => {
       await update($, activity, () => [])
       await update($, files, () => [])
       await update($, waits, () => [])
+      await update($, flow, () => null)
       // The process goes on under an id not yet known.
       here = { ...NOWHERE, root: here.root }
       await refresh($, false)
+    }
+
+    return next(e)
+  })
+
+  // A slash command naming a flow skill starts its phase. With guidance on, a
+  // smart-zone crossing reaches Claude once, beside the person's next prompt:
+  // never through the system prompt (ADR 0001).
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command !== undefined) await startPhase($, e.command.name)
+    if (!hasGuidance) return next(e)
+    try {
+      const measured = await read($, usage)
+      if (measured.zoneOwed !== 'inside') {
+        const text = zoneNote(measured.zoneOwed, measured.contextTokens, measured.zoneLimit)
+        await update($, usage, value => ({ ...value, zoneOwed: 'inside' as const }))
+
+        return next({ ...e, context: [...(e.context ?? []), text] })
+      }
+    } catch (error) {
+      say($, 'prompt.submit', error)
     }
 
     return next(e)
@@ -879,24 +922,6 @@ export const register: Register = (on, options) => {
       if (e.surfaces.length === 0) return composed
 
       return { sections: [...composed.sections, GUIDANCE] }
-    })
-
-    // A smart-zone crossing reaches Claude once, beside the person's next
-    // prompt: never through the system prompt (ADR 0001).
-    on('prompt.submit', async ($, e, next) => {
-      try {
-        const measured = await read($, usage)
-        if (measured.zoneOwed !== 'inside') {
-          const text = zoneNote(measured.zoneOwed, measured.contextTokens, measured.zoneLimit)
-          await update($, usage, value => ({ ...value, zoneOwed: 'inside' as const }))
-
-          return next({ ...e, context: [...(e.context ?? []), text] })
-        }
-      } catch (error) {
-        say($, 'prompt.submit', error)
-      }
-
-      return next(e)
     })
 
     // The mod's own tool writes nothing but the mod's own record.
@@ -1031,6 +1056,7 @@ export const register: Register = (on, options) => {
     }
     await update($, ui, value => ({ ...value, hasOpened: true }))
     void openPane($).catch(() => undefined)
+    await startPhase($, 'orchestrate')
     // A command.run hook holds the turn a submit would wait on: submit after it.
     $.clock.after(50, () => {
       void $.prompt
@@ -1056,6 +1082,8 @@ export const register: Register = (on, options) => {
       }))
       // The prompt is the person's answer to whatever the main loop waited on.
       await update($, waits, list => list.filter(wait => wait.agentId !== undefined))
+      // Work started: the attention element may show HITL or AFK work.
+      if ((await read($, flow)) !== null) await refresh($, false)
       here = await whereabouts($, here, now)
       if (here.title === '') here = { ...here, title: clip(e.text, 80) }
 
@@ -1406,6 +1434,14 @@ export const register: Register = (on, options) => {
     }
 
     return ran
+  })
+
+  // A flow skill invoked in the main loop, or typed as a slash command,
+  // starts its phase; one off the table leaves the phase as it was.
+  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    if (e.agentId === undefined) await startPhase($, e.skill)
+
+    return next(e)
   })
 
   on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {

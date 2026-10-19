@@ -7,6 +7,7 @@ import type {
   Check,
   FamilyCounts,
   FileHit,
+  Flow,
   GitState,
   LimitTrack,
   Proc,
@@ -28,6 +29,7 @@ import type {
 import { CHECK_KINDS, checkLines, checksLine, stateOf } from './checks'
 import type { CheckState } from './checks'
 import { cityAlt, layoutFor, quartersOf, renderCity } from './city'
+import { attentionOf, nextStepOf } from './flow'
 import { areasOfFiles, gitLine } from './codemap'
 import { avatarAlt, avatarSvg } from './icons'
 import {
@@ -102,8 +104,8 @@ export type Model = {
   isStill: boolean
   /** The project's archive less what is on the board: what the full city adds. */
   archived: Archive | null
-  /** The next step the flow calls for, in full and as its first move. Nothing sets it yet. */
-  nextStep?: { text: string; short: string }
+  /** The phase the last flow skill started, with its kind and next step; null off the flow. */
+  flow: Flow | null
 }
 
 export type Actions = {
@@ -403,32 +405,45 @@ const promptBlock = (el: El, m: Model, room: Room): RenderElement[] => {
 export type StripElement = { text: string; color: string; rank: number; isBold?: boolean; short?: string }
 
 // The part of the model the strip is made from: all the status line reads.
-export type StripModel = Pick<Model, 'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'nextStep'>
+export type StripModel = Pick<
+  Model,
+  'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'turn' | 'agents' | 'flow'
+>
 
-// The strip, in its one order: what needs the person, the limit warning while
-// it fires, the next step where one is known, the smart zone and tasks done.
-// Empty where there is nothing to say.
+// The strip's first element: needs you in rose, never dropped; HITL or AFK
+// work in the quiet colour, the last element dropped.
+const attentionElement = (m: StripModel): StripElement | undefined => {
+  const attention = attentionOf(m)
+  if (attention === undefined) return undefined
+
+  return attention.tone === 'needs'
+    ? { text: attention.text, color: C.fail, rank: 0, isBold: true }
+    : { text: attention.text, color: C.muted, rank: 1 }
+}
+
+// The strip, in its one order: the attention element, the limit warning
+// while it fires, the next step where one is known, the smart zone and tasks
+// done. Empty where there is nothing to say.
 export const stripElements = (m: StripModel): StripElement[] => {
-  const blocker = blockerOf(m)
   const alert = limitAlert(forecastsFor(m), m.now)
+  const step = nextStepOf(m.flow)
   const context = m.usage.contextTokens
   const zone = zoneOf(context, m.usage.zoneLimit)
   const stats = taskStats(m.tasks)
   const strip: StripElement[] = []
-  if (blocker !== undefined) strip.push({ text: waitMark(blocker), color: C.fail, rank: 0, isBold: true })
-  if (alert !== undefined) strip.push({ text: alert, color: C.fail, rank: 1 })
-  if (m.nextStep !== undefined) {
-    strip.push({ text: m.nextStep.text, color: C.text, rank: 2, short: m.nextStep.short })
-  }
+  const attention = attentionElement(m)
+  if (attention !== undefined) strip.push(attention)
+  if (alert !== undefined) strip.push({ text: alert, color: C.fail, rank: 2 })
+  if (step !== undefined) strip.push({ text: step.text, color: C.text, rank: 3, ...(step.short === undefined ? {} : { short: step.short }) })
   if (context > 0) {
     const reading = `ctx ${compact(context)}`
     strip.push(
       zone === 'out'
-        ? { text: `${reading} · out of the smart zone`, color: ZONE_COLOR[zone], rank: 3, short: reading }
-        : { text: reading, color: ZONE_COLOR[zone], rank: 3 },
+        ? { text: `${reading} · out of the smart zone`, color: ZONE_COLOR[zone], rank: 4, short: reading }
+        : { text: reading, color: ZONE_COLOR[zone], rank: 4 },
     )
   }
-  if (stats.total > 0) strip.push({ text: `${stats.done}/${stats.total} tasks`, color: C.muted, rank: 4 })
+  if (stats.total > 0) strip.push({ text: `${stats.done}/${stats.total} tasks`, color: C.muted, rank: 5 })
 
   return strip
 }
@@ -1107,7 +1122,7 @@ export const summary = (m: Model): string => {
   const running = m.procs.filter(proc => proc.status === 'running')
   const active = m.tasks.filter(task => task.status === 'in_progress')
   const { expected } = m.turn
-  const phase = m.project === null || m.project.phase === '' ? '' : ` · ${m.project.phase}`
+  const phase = m.flow === null ? '' : ` · ${m.flow.phase}`
   const blocker = blockerOf(m)
   const checked = standingText(m.tasks)
   const ran = checksLine(m.checks)
@@ -1183,7 +1198,7 @@ export const pane = (
           {clip(m.project?.name ?? '', 28)}
         </Text>
         <Text color={C.muted} wrap="truncate-end">
-          {m.project?.phase ?? ''}
+          {m.flow?.phase ?? ''}
         </Text>
       </Box>
       <Box flexDirection="row" gap={1} flexWrap="wrap">

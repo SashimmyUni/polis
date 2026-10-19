@@ -1,4 +1,4 @@
-import type { AgentRun, Archive, ArchiveEntry, Check, Proc, Project, Skills, Task, Turn, Usage, Wait } from '../types'
+import type { AgentRun, Archive, ArchiveEntry, Check, Flow, Proc, Project, Skills, Task, Turn, Usage, Wait } from '../types'
 import { CHECK_KINDS, CHECK_LABEL, stateOf } from './checks'
 import { avatar, esc, mix, n } from './icons'
 import {
@@ -36,6 +36,8 @@ export type CityInput = {
   isStill?: boolean
   /** The full city: the archive's finished work not on the board, drawn beside it. */
   archive?: Archive
+  /** The flow's phase, for the page's header. */
+  flow?: Flow | null
 }
 
 // The city is laid out on a square grid and drawn in a 2:1 isometric view:

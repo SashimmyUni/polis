@@ -1,7 +1,8 @@
 import { cityAlt, renderCity } from './city'
 import type { CityInput } from './city'
 import { esc } from './icons'
-import { compact, isBlocking, sessionState, taskStats, topWait, waitMark, zoneMark, zoneOf } from './logic'
+import { attentionOf, nextStepOf } from './flow'
+import { compact, sessionState, taskStats, zoneMark, zoneOf } from './logic'
 import { C } from './theme'
 
 // The city as a page on disk, for a browser or an editor's preview tab left
@@ -34,13 +35,16 @@ const fluid = (svg: string): string => svg.replace(/ width="[0-9]+" height="[0-9
 // the session is doing), where the context stands against the smart zone,
 // and how many tasks are done.
 const facts = (m: CityInput): string => {
-  const top = topWait(m.waits ?? [])
+  const flow = m.flow ?? null
+  const attention = attentionOf({ ...m, waits: m.waits ?? [], flow })
+  const step = nextStepOf(flow)
   const spans: string[] = []
-  if (top !== undefined && isBlocking(top)) {
-    spans.push(`<span class="needs">${esc(waitMark(top))}</span>`)
+  if (attention?.tone === 'needs') {
+    spans.push(`<span class="needs">${esc(attention.text)}</span>`)
   } else {
-    spans.push(`<span>${sessionState(m.turn.isWorking, m.waits ?? [])}</span>`)
+    spans.push(`<span>${esc(attention?.text ?? sessionState(m.turn.isWorking, m.waits ?? []))}</span>`)
   }
+  if (step !== undefined) spans.push(`<span>${esc(step.text)}</span>`)
   const tokens = m.usage.contextTokens
   if (tokens > 0) {
     const level = zoneOf(tokens, m.usage.zoneLimit)

@@ -107,7 +107,8 @@ test('session report: a full session, in order', () => {
     [
       '# Atlas — session report',
       '',
-      '2026-10-12 · Parser rewrite · branch feature/parser (3 files changed, +120 -30, 1 untracked)',
+      // The project tool's free-text phase is not shown.
+      '2026-10-12 · branch feature/parser (3 files changed, +120 -30, 1 untracked)',
       '',
       '## Summary',
       '',
@@ -287,7 +288,7 @@ test('session report: a section with nothing to say is left out', () => {
   expect(checksOnly).not.toContain('- Tasks:')
   expect(checksOnly).not.toContain('## Done')
 
-  // The project's name and phase, with nothing else; a git of `null` is none.
+  // The project's name, with nothing else; a git of `null` is none.
   const named = reportOf({
     ...EMPTY,
     project: { ...newProject('/work/atlas', 0), name: 'Atlas', phase: '' },
