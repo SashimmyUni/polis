@@ -573,6 +573,7 @@ const openAt = async ($: EngineInterface, view: ViewName | undefined): Promise<U
 const actionsOf = ($: EngineInterface): Actions => ({
   setView: view => update($, ui, value => ({ ...value, view })),
   toggleCity: () =>
+    // Typed as Ui so the type check does not widen cityView to string.
     update($, ui, (value): Ui => ({ ...value, cityView: value.cityView === 'full' ? 'current' : 'full' })),
   openCity: () => openAt($, 'city'),
   hideBand: async () => {

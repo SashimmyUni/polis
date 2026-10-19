@@ -33,11 +33,11 @@ Used by `/wayfinder`. The **map** is a single issue with **sub-issues** as ticke
 - **Find the maps**: `gh issue list --label wayfinder:map --state open --json number,title`.
 - **Map**: `gh issue create --label wayfinder:map --title "Map: ..." --body-file <file>`. Edit its body with `gh issue view <map> --json body -q .body > <file>`, change the file, then `gh issue edit <map> --body-file <file>`. Check the change landed before writing it back.
 - **Child ticket**: `gh issue create --parent <map> --label wayfinder:<type> --title "..." --body-file <file>`.
-- **Blocking**: GitHub's native issue dependencies. Add an edge with `gh api --method POST repos/SashimmyUni/polis/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where the database id comes from `gh api repos/SashimmyUni/polis/issues/<blocker> --jq .id` (not the `#number` or `node_id`). List a ticket's blockers with `gh api repos/SashimmyUni/polis/issues/<n>/dependencies/blocked_by --jq '.[]|"\(.number) \(.state)"'`.
+- **Blocking**: GitHub's native issue dependencies. Add an edge with `gh api --method POST repos/{owner}/{repo}/issues/<child>/dependencies/blocked_by -F issue_id=<blocker-db-id>`, where the database id comes from `gh api repos/{owner}/{repo}/issues/<blocker> --jq .id` (not the `#number` or `node_id`). List a ticket's blockers with `gh api repos/{owner}/{repo}/issues/<n>/dependencies/blocked_by --jq '.[]|"\(.number) \(.state)"'`.
 - **Frontier query**: open, unassigned children with no open blocker, in map order:
 
   ```bash
-  gh api repos/SashimmyUni/polis/issues/<map>/sub_issues --jq '.[] | select(.state=="open" and (.assignees|length)==0 and .issue_dependencies_summary.blocked_by==0) | "\(.number)\t\([.labels[].name]|join(","))\t\(.title)"'
+  gh api repos/{owner}/{repo}/issues/<map>/sub_issues --jq '.[] | select(.state=="open" and (.assignees|length)==0 and .issue_dependencies_summary.blocked_by==0) | "\(.number)\t\([.labels[].name]|join(","))\t\(.title)"'
   ```
 
 - **Claim**: `gh issue edit <n> --add-assignee @me`, the session's first write.
