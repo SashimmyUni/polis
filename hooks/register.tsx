@@ -14,6 +14,7 @@ import type {
   Ui,
   Usage,
   ViewName,
+  Wait,
 } from '../types'
 import { WRAP_UP, askOf } from './ask'
 import { CHECK_LABEL, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
@@ -109,6 +110,7 @@ const IDLE: Turn = {
   steps: 0,
   agents: 0,
   hasWarned: false,
+  hasNeededYou: false,
 }
 
 const UNMEASURED: Usage = {
@@ -381,6 +383,13 @@ const loadStrip = async ($: EngineInterface): Promise<StripModel> => ({
   flow: await read($, flow),
   progress: await read($, progress),
 })
+
+// Something holds work up until the person acts. The turn remembers it was
+// put to the person, answered or not.
+const needYou = async ($: EngineInterface, wait: Wait): Promise<void> => {
+  await update($, waits, list => addWait(list, wait))
+  await update($, turn, value => (value.isWorking ? { ...value, hasNeededYou: true } : value))
+}
 
 // Why the work stalled, as the strip last said it: the clock draws again only
 // when that changes, so the stall's age moves and a cleared stall leaves.
@@ -745,7 +754,9 @@ const keepLive = async ($: EngineInterface, here: Here): Promise<void> => {
 // This session's live record as it stands: what the others read of it.
 const liveOf = async ($: EngineInterface, here: Here, now: number): Promise<LiveSession> => {
   const measured = await read($, usage)
-  const stall = stalledOf(await loadStrip($))
+  const strip = await loadStrip($)
+  const stall = stalledOf(strip)
+  const kind = workKind(strip)
 
   return liveSessionOf({
     sessionId: here.id,
@@ -758,6 +769,7 @@ const liveOf = async ($: EngineInterface, here: Here, now: number): Promise<Live
     usage: measured,
     tokens: here.tokensKept + Math.max(0, measured.sessionTokens - here.tokensFrom),
     flow: await read($, flow),
+    ...(kind === undefined ? {} : { workKind: kind }),
     stall: stall?.why ?? '',
     now,
   })
@@ -1507,15 +1519,13 @@ export const register: Register = (on, options) => {
       const asking = Object.hasOwn(ASKING, tool) ? ASKING[tool] : undefined
       if (asking !== undefined) {
         const detail = asking === 'question' ? firstQuestion(e) : undefined
-        await update($, waits, list =>
-          addWait(list, {
-            kind: asking,
-            at: began,
-            tool,
-            ...(agentId === undefined ? {} : { agentId }),
-            ...(detail === undefined ? {} : { detail: clip(detail, 80) }),
-          }),
-        )
+        await needYou($, {
+          kind: asking,
+          at: began,
+          tool,
+          ...(agentId === undefined ? {} : { agentId }),
+          ...(detail === undefined ? {} : { detail: clip(detail, 80) }),
+        })
         await refresh($, false)
       }
       if (agentId === undefined) {
@@ -1790,15 +1800,13 @@ export const register: Register = (on, options) => {
       const kind = (Object.hasOwn(ASKING, tool) ? ASKING[tool] : undefined) ?? 'permission'
       const detail = kind === 'question' ? firstQuestion(e.tool_input) : undefined
       const agentId = e.agent_id
-      await update($, waits, list =>
-        addWait(list, {
-          kind,
-          at,
-          tool,
-          ...(agentId === undefined ? {} : { agentId }),
-          ...(detail === undefined ? {} : { detail: clip(detail, 80) }),
-        }),
-      )
+      await needYou($, {
+        kind,
+        at,
+        tool,
+        ...(agentId === undefined ? {} : { agentId }),
+        ...(detail === undefined ? {} : { detail: clip(detail, 80) }),
+      })
       await refresh($, false)
     } catch (error) {
       say($, 'classic.PermissionRequest', error)

@@ -240,6 +240,25 @@ test('the record carries the phase, kind and next step the flow set', NO_PAGE, a
   expect(kept[key]).toMatchObject({ phase: 'implementing', kind: 'AFK', nextStep: '/code-review' })
 })
 
+test('off the flow the record carries the kind live signals give, with no phase or next step', NO_PAGE, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept: Record<string, unknown> = {}
+  world(on, kept)
+  const key = `live:${ROOT}:session-1`
+
+  await $.session.start(START)
+  await $.turn.start({ text: 'Fix the build', turnId: 'turn-1' })
+  await clock.advance(2000)
+  expect(kept[key]).toMatchObject({ phase: '', kind: '', nextStep: '' })
+
+  await clock.advance(2 * 60_000)
+  expect(kept[key]).toMatchObject({ phase: '', kind: 'AFK', nextStep: '' })
+
+  await $.turn.complete({ answer: 'done', durationMs: 4000, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  await clock.advance(2000)
+  expect(kept[key]).toMatchObject({ kind: '' })
+})
+
 test('another session that needs the person is named on the status line within five seconds, and goes when it is answered', NO_PAGE, async ($, on) => {
   const clock = mock.clock(on)
   const kept: Record<string, unknown> = {}

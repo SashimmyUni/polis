@@ -34,14 +34,15 @@ export const flowOf = (name: string): Flow | undefined => {
   return { phase, kind, next, first: first ?? next }
 }
 
-// Off the flow, a turn this long with nothing asked is work the person can leave.
+// Off the flow, a turn this long that has put nothing to the person is work
+// the person can leave.
 export const AFK_AFTER_MS = 2 * 60_000
 
 // What the attention element is made from.
 export type AttentionInput = {
   now: number
   waits: readonly Wait[]
-  turn: Pick<Turn, 'isWorking' | 'startedAt'>
+  turn: Pick<Turn, 'isWorking' | 'startedAt' | 'hasNeededYou'>
   agents: readonly AgentRun[]
   tasks: readonly Task[]
   flow: Flow | null
@@ -52,11 +53,12 @@ export type AttentionInput = {
 }
 
 // The kind of the work running now: the phase's while Claude works, else AFK
-// while an agent runs or the turn has gone two minutes; nothing while idle.
+// while an agent runs or the turn has gone two minutes without needing the
+// person; nothing while idle.
 export const workKind = (m: AttentionInput): FlowKind | undefined => {
   if (!m.turn.isWorking) return undefined
   if (m.flow !== null) return m.flow.kind
-  const isLong = m.now - m.turn.startedAt >= AFK_AFTER_MS
+  const isLong = !m.turn.hasNeededYou && m.now - m.turn.startedAt >= AFK_AFTER_MS
 
   return m.agents.some(isLive) || isLong ? 'AFK' : undefined
 }

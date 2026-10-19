@@ -182,6 +182,8 @@ export type Turn = {
   steps: number
   agents: number
   hasWarned: boolean
+  /** Whether anything this turn has needed the person, answered since or not. */
+  hasNeededYou: boolean
 }
 
 export type RateLimit = { kind: string; percentUsed: number; resetsAt?: string }
