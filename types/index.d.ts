@@ -233,6 +233,37 @@ export type Wait = {
   count?: number
 }
 
+/**
+ * One running session of the project as the others see it: written under its
+ * own key while it runs, and gone when it ends or falls silent.
+ */
+export type LiveSession = {
+  sessionId: string
+  /** The project's root: the main working tree, for a worktree too. */
+  root: string
+  title: string
+  state: 'needs you' | 'working' | 'your turn' | 'idle'
+  /** What it waits on the person for first, and since when. */
+  wait: { text: string; at: number } | null
+  /** Empty until the flow sets them. */
+  phase: string
+  kind: string
+  nextStep: string
+  /** The task in progress, by its subject. */
+  task: string
+  /** Agents working. */
+  agents: number
+  tasksDone: number
+  tasksTotal: number
+  contextTokens: number
+  zoneLimit: number
+  tokens: number
+  costUsd: number
+  /** Why work has stalled; empty when it has not. */
+  stall: string
+  updatedAt: number
+}
+
 export type TurnRecord = {
   size: Size
   tokens: number
@@ -340,6 +371,8 @@ declare module 'claude-code' {
       log: ProjectLog | null
       archive: Archive | null
       tick: number
+      /** The project's other live sessions, as last read. */
+      others: LiveSession[]
       tracker: Tracker | null
     }
   }

@@ -63,6 +63,12 @@ const world = (on: On, kept: Record<string, unknown> = {}): Gh => {
 
     return { value: undefined }
   })
+  on('store.delete', (_, e) => {
+    delete kept[e.key]
+
+    return { value: undefined }
+  })
+  on('store.keys', () => ({ value: Object.keys(kept) }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.repo', () => ({ value: null }))

@@ -9,6 +9,7 @@ import type {
   FileHit,
   GitState,
   LimitTrack,
+  LiveSession,
   Proc,
   Project,
   ProjectLog,
@@ -64,6 +65,7 @@ import {
   zoneOf,
 } from './logic'
 import type { LimitForecast } from './logic'
+import { needsYouMark } from './live'
 import { projectHeadline, projectLines } from './projectlog'
 import { C, FAMILY_COLOR, FAMILY_GLYPH, FAMILY_LABEL, VIEWS, lookOf } from './theme'
 import { STANDING, standingOf, standings, verdictNote } from './verify'
@@ -109,6 +111,8 @@ export type Model = {
   tracker?: Tracker | null
   /** The next step the flow calls for, in full and as its first move. Nothing sets it yet. */
   nextStep?: { text: string; short: string }
+  /** The project's other live sessions. */
+  others?: LiveSession[]
 }
 
 export type Actions = {
@@ -408,7 +412,7 @@ const promptBlock = (el: El, m: Model, room: Room): RenderElement[] => {
 export type StripElement = { text: string; color: string; rank: number; isBold?: boolean; short?: string }
 
 // The part of the model the strip is made from: all the status line reads.
-export type StripModel = Pick<Model, 'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'nextStep'>
+export type StripModel = Pick<Model, 'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'nextStep' | 'others'>
 
 // The strip, in its one order: what needs the person, the limit warning while
 // it fires, the next step where one is known, the smart zone and tasks done.
@@ -420,7 +424,9 @@ export const stripElements = (m: StripModel): StripElement[] => {
   const zone = zoneOf(context, m.usage.zoneLimit)
   const stats = taskStats(m.tasks)
   const strip: StripElement[] = []
-  if (blocker !== undefined) strip.push({ text: waitMark(blocker), color: C.fail, rank: 0, isBold: true })
+  // Other live sessions are counted beside this one's wait, or named alone.
+  const needs = needsYouMark(blocker === undefined ? undefined : waitText(blocker), m.others ?? [])
+  if (needs !== undefined) strip.push({ text: needs, color: C.fail, rank: 0, isBold: true })
   if (alert !== undefined) strip.push({ text: alert, color: C.fail, rank: 1 })
   if (m.nextStep !== undefined) {
     strip.push({ text: m.nextStep.text, color: C.text, rank: 2, short: m.nextStep.short })

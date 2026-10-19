@@ -5,6 +5,7 @@ import type {
   AgentRun,
   AgentRunStatus,
   CheckKind,
+  LiveSession,
   Proc,
   RateLimit,
   Task,
@@ -16,6 +17,8 @@ import type {
 import { WRAP_UP, askOf } from './ask'
 import { CHECK_LABEL, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
 import { GIT_DIFF, GIT_STATUS, areaOfPath, noteTouch, parseGit, taskOfEdit } from './codemap'
+import { CHANGE_MS, liveKeeper, liveSessionOf } from './live'
+import type { LiveKeeper } from './live'
 import {
   ASKING,
   SIZES,
@@ -143,6 +146,7 @@ const git = atom({ plugin: 'polis', key: 'git' } as const, null)
 const log = atom({ plugin: 'polis', key: 'log' } as const, null)
 const archive = atom({ plugin: 'polis', key: 'archive' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
+const others = atom({ plugin: 'polis', key: 'others' } as const, [])
 const tracker = atom({ plugin: 'polis', key: 'tracker' } as const, null)
 
 const GUIDANCE = {
@@ -347,6 +351,7 @@ const loadStrip = async ($: EngineInterface): Promise<StripModel> => ({
   limits: await read($, limits),
   usage: await read($, usage),
   tasks: await read($, tasks),
+  others: await read($, others),
 })
 
 const rootOf = async ($: EngineInterface): Promise<string> => {
@@ -653,8 +658,45 @@ const load = async (
     ui: await read($, ui),
     activity: await read($, activity),
     files: await read($, files),
+    others: await read($, others),
     tracker: await read($, tracker),
   }
+}
+
+// This session's live record, kept in the store the other running sessions
+// read, and its reading of theirs; set once the session has started.
+let keeper: LiveKeeper | undefined
+
+const keepLive = async ($: EngineInterface, here: Here): Promise<void> => {
+  if (keeper === undefined || here.id === '' || here.root === '') return
+  const now = await $.clock.now()
+  const measured = await read($, usage)
+  const record = liveSessionOf({
+    sessionId: here.id,
+    root: here.root,
+    title: here.title,
+    isWorking: (await read($, turn)).isWorking,
+    waits: await read($, waits),
+    tasks: await read($, tasks),
+    agents: await read($, agents),
+    usage: measured,
+    tokens: here.tokensKept + Math.max(0, measured.sessionTokens - here.tokensFrom),
+    now,
+  })
+  await keeper.write(record, now)
+}
+
+// What the others' records say without their times: a heartbeat alone is no
+// reason to draw again.
+const saidBy = (list: readonly LiveSession[]): string =>
+  JSON.stringify(list.map(one => ({ ...one, updatedAt: 0 })))
+
+const readLive = async ($: EngineInterface, here: Here): Promise<void> => {
+  if (keeper === undefined || here.root === '') return
+  const found = await keeper.others(here.root, here.id, await $.clock.now())
+  if (saidBy(found) === saidBy(await read($, others))) return
+  await update($, others, () => found)
+  await refresh($, false)
 }
 
 // The pages on disk: what was last written to each, and whether a failure
@@ -844,6 +886,20 @@ export const register: Register = (on, options) => {
       say($, 'loading the project', error)
     }
 
+    // The other running sessions of the project, and this one for them.
+    try {
+      keeper = liveKeeper({
+        get: key => $.store.get(key),
+        set: (key, value) => $.store.set(key, value),
+        delete: key => $.store.delete(key),
+        keys: () => $.store.keys(),
+      })
+      await keepLive($, here)
+      await readLive($, here)
+    } catch (error) {
+      say($, 'reading the live sessions', error)
+    }
+
     // A pane left open across a reload asks again for its room: an open sets
     // the size anew, and the person's own size still wins.
     try {
@@ -866,6 +922,15 @@ export const register: Register = (on, options) => {
       })().catch(() => undefined)
     })
 
+    // This session's record follows it within two seconds and beats every
+    // thirty; the others' are read every five.
+    $.clock.every(CHANGE_MS, () => {
+      void keepLive($, here).catch(() => undefined)
+    })
+    $.clock.every(5000, () => {
+      void readLive($, here).catch(() => undefined)
+    })
+
     // The page is there from the start, then follows the board.
     if (hasPage && pageRoot !== null) {
       const root = pageRoot
@@ -880,6 +945,12 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
+    try {
+      // The others stop counting this session at once.
+      if (keeper !== undefined && here.id !== '' && here.root !== '') await keeper.end(here.root, here.id)
+    } catch (error) {
+      say($, 'ending the live record', error)
+    }
     try {
       await saveSession($, here, true)
       await saveTasks($, here)
