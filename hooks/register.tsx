@@ -8,7 +8,6 @@ import type {
   LiveSession,
   Proc,
   RateLimit,
-  StallReason,
   Task,
   Turn,
   Ui,
@@ -393,22 +392,22 @@ const needYou = async ($: EngineInterface, wait: Wait): Promise<void> => {
 
 // Why the work stalled, as the strip last said it: the clock draws again only
 // when that changes, so the stall's age moves and a cleared stall leaves.
+// Nothing while the work is not stalled.
 let stallSaid: string | undefined
-let stallReason: StallReason | undefined
 
 // This session as a notification names it; set once the mod registers.
 let nameHere = (): string => sessionName('', '')
 
-// Reads the stall rule now. A stall that begins (none before, or another
-// reason) is the moment to tell the person.
+// Reads the stall rule now. A stall that begins where there was none is the
+// moment to tell the person; one that only changes its reason is the same
+// stall.
 const watchStall = async ($: EngineInterface): Promise<void> => {
   const model = await loadStrip($)
   const stall = stalledOf(model)
   const said = stall === undefined ? undefined : `${about(model.now - stall.since)}: ${stall.why}`
   if (said === stallSaid) return
-  const hasBegun = stall !== undefined && stall.reason !== stallReason
+  const hasBegun = stall !== undefined && stallSaid === undefined
   stallSaid = said
-  stallReason = stall?.reason
   await refresh($, false)
   if (!hasBegun) return
   await note($, 'stall', `Stalled: ${stall.why}`)
