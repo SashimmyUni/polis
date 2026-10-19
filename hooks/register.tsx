@@ -713,7 +713,7 @@ const load = async (
     columns,
     aspect,
     ...session,
-    ...(at === undefined || at.id === '' || live.length === 0 ? {} : { thisSession: await liveOf($, at, now) }),
+    ...(at === undefined || at.id === '' || live.length === 0 ? {} : { thisSession: stampLive(await liveOf($, at, now)) }),
     // A session whose start was not seen is placed by its project's record.
     root: session.root === '' ? (record?.root ?? '') : session.root,
     limits: await read($, limits),
@@ -749,6 +749,9 @@ const keepLive = async ($: EngineInterface, here: Here): Promise<void> => {
   const now = await $.clock.now()
   await keeper.write(await liveOf($, here, now), now)
 }
+
+// This session's record with when it last changed, as the others read it.
+const stampLive = (record: LiveSession): LiveSession => keeper?.stamp(record) ?? record
 
 // This session's live record as it stands: what the others read of it.
 const liveOf = async ($: EngineInterface, here: Here, now: number): Promise<LiveSession> => {

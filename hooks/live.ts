@@ -31,11 +31,16 @@ const asLive = (value: unknown): LiveSession | undefined => {
   if (typeof record !== 'object' || record === null) return undefined
   if (typeof record.sessionId !== 'string' || typeof record.updatedAt !== 'number') return undefined
 
-  return record as LiveSession
+  // A record from before movedAt was kept moved when it was last written.
+  return { ...record, movedAt: typeof record.movedAt === 'number' ? record.movedAt : record.updatedAt } as LiveSession
 }
 
-// What a session last wrote: under which key, what (less the time), and when.
-type Written = { key: string; body: string; at: number }
+// What a record says, less its times: what a heartbeat leaves as it was.
+const bodyOf = (record: LiveSession): string => JSON.stringify({ ...record, updatedAt: 0, movedAt: 0 })
+
+// What a session last wrote: under which key, what (less the times), when,
+// and when what it says last changed.
+type Written = { key: string; body: string; at: number; movedAt: number }
 
 // One session's side of the records: its own, written on change and as a
 // heartbeat, and the others', read.
@@ -44,18 +49,30 @@ export type LiveKeeper = ReturnType<typeof liveKeeper>
 export const liveKeeper = (store: LiveStore) => {
   let last: Written | undefined
 
+  // The record with the time what it says last changed: kept from the last
+  // write while it says the same, else the record's own time.
+  const stamp = (record: LiveSession): LiveSession => {
+    const isSame =
+      last !== undefined && last.key === liveKey(record.root, record.sessionId) && last.body === bodyOf(record)
+
+    return isSame ? { ...record, movedAt: last?.movedAt ?? record.movedAt } : record
+  }
+
   return {
+    stamp,
+
     // Writes the session's record when it changed and the last write is
     // CHANGE_MS old, or when the heartbeat is due; says whether it wrote.
     write: async (record: LiveSession, now: number): Promise<boolean> => {
       const key = liveKey(record.root, record.sessionId)
-      const body = JSON.stringify({ ...record, updatedAt: 0 })
+      const body = bodyOf(record)
       if (last !== undefined && last.key === key) {
         const since = now - last.at
         if (since < (body === last.body ? HEARTBEAT_MS : CHANGE_MS)) return false
       }
-      await store.set(key, { ...record, updatedAt: now })
-      last = { key, body, at: now }
+      const { movedAt } = stamp({ ...record, movedAt: now })
+      await store.set(key, { ...record, updatedAt: now, movedAt })
+      last = { key, body, at: now, movedAt }
 
       return true
     },
@@ -159,5 +176,6 @@ export const liveSessionOf = (parts: LiveParts): LiveSession => {
     costUsd: parts.usage.costUsd,
     stall: parts.stall ?? '',
     updatedAt: parts.now,
+    movedAt: parts.now,
   }
 }

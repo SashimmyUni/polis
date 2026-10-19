@@ -92,6 +92,7 @@ const other = (sessionId: string, at: number, extra: Partial<LiveSession> = {}):
   costUsd: 0,
   stall: '',
   updatedAt: at,
+  movedAt: at,
   ...extra,
 })
 
@@ -181,6 +182,23 @@ test('the other sessions follow by their latest activity, and the heading sums e
   expect(block).toContain('idle')
   // Nothing worked yet this session: it says only that it is idle.
   expect(block.slice(2, 5)).toEqual(['●', 'untitled session', 'idle · this session'])
+})
+
+test('sessions follow by when they last changed, not by their heartbeats, this one included', NO_PAGE, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept: Record<string, unknown> = {}
+  world(on, kept)
+  await $.session.start(START)
+  // This session has done nothing since it started, a minute and a half ago.
+  await clock.advance(90_000)
+  const now = clock.now()
+  kept[`live:${ROOT}:beating`] = other('beating', now - 1000, { title: 'Beating', movedAt: now - 80_000 })
+  kept[`live:${ROOT}:moving`] = other('moving', now - 20_000, { title: 'Moving', movedAt: now - 30_000 })
+  await clock.advance(5000)
+
+  const block = await sessionsBlock($)
+  const titles = block.filter(text => ['Moving', 'Beating', 'untitled session'].includes(text))
+  expect(titles).toEqual(['Moving', 'Beating', 'untitled session'])
 })
 
 test('a narrow pane wraps the entries rather than cutting them', NO_PAGE, async ($, on) => {

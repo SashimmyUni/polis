@@ -47,6 +47,7 @@ const live = (sessionId: string, at: number, extra: Partial<LiveSession> = {}): 
   costUsd: 0,
   stall: '',
   updatedAt: at,
+  movedAt: at,
   ...extra,
 })
 
@@ -97,6 +98,8 @@ test('a record is written on change at most every two seconds, and unchanged eve
   expect(await at(31_999)).toBe(false)
   expect(await at(32_000)).toBe(true)
   expect((store.kept.get(`live:${ROOT}:a`) as LiveSession).updatedAt).toBe(T0 + 32_000)
+  // The heartbeat leaves when it last changed.
+  expect((store.kept.get(`live:${ROOT}:a`) as LiveSession).movedAt).toBe(T0 + 2000)
 })
 
 test('after a /clear the session writes under its new id at once and the old record goes', async () => {

@@ -896,14 +896,14 @@ const liveDetail = (one: LiveSession): string =>
     .filter(part => part !== '')
     .join(' · ')
 
-// Every live session of the project, this one marked, newest activity first;
+// Every live session of the project, this one marked, the last changed first;
 // nothing while this session is the only one.
 const sessionsBlock = (el: El, m: Model): RenderElement[] => {
   const { Box, Text } = el
   const others = m.others ?? []
   if (m.thisSession === undefined || others.length === 0) return []
   const own = m.thisSession
-  const all = [own, ...others].sort((one, two) => two.updatedAt - one.updatedAt)
+  const all = [own, ...others].sort((one, two) => two.movedAt - one.movedAt)
   const tokens = all.reduce((sum, one) => sum + one.tokens, 0)
   const cost = all.reduce((sum, one) => sum + one.costUsd, 0)
 

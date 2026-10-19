@@ -263,7 +263,10 @@ export type LiveSession = {
   costUsd: number
   /** Why work has stalled; empty when it has not. */
   stall: string
+  /** When the record was last written, heartbeats included. */
   updatedAt: number
+  /** When what the record says last changed: a heartbeat leaves it. */
+  movedAt: number
 }
 
 export type TurnRecord = {

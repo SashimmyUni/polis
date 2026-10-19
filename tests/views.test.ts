@@ -257,6 +257,7 @@ test('the /city answer leads with the strip’s first element: HITL or AFK work,
     costUsd: 0,
     stall: '',
     updatedAt: clock.now(),
+    movedAt: clock.now(),
   }
   await clock.advance(5000)
   expect((await answer($, here)).split('\n')[1]).toBe('▲ needs you in "Write the docs": a plan to approve')
