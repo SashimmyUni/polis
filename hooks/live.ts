@@ -120,11 +120,13 @@ export type LiveParts = {
   tokens: number
   /** The flow as the last flow skill set it; null off the flow. */
   flow: Flow | null
+  /** Why the session's work is stalled, in words; empty or left out while it is not. */
+  stall?: string
   now: number
 }
 
 // This session's record as the others read it. Phase, kind and next step
-// come from the flow, empty off it; the stall stays empty for now.
+// come from the flow, empty off it.
 export const liveSessionOf = (parts: LiveParts): LiveSession => {
   const top = topWait(parts.waits)
   const stats = taskStats(parts.tasks)
@@ -146,7 +148,7 @@ export const liveSessionOf = (parts: LiveParts): LiveSession => {
     zoneLimit: parts.usage.zoneLimit,
     tokens: parts.tokens,
     costUsd: parts.usage.costUsd,
-    stall: '',
+    stall: parts.stall ?? '',
     updatedAt: parts.now,
   }
 }

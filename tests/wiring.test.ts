@@ -325,6 +325,8 @@ test("the status line is the band's list in the band's order, with no checks and
   await $.session.measure(reading(40))
   await clock.advance(12 * 60_000)
   await $.session.measure(reading(60))
+  // Work that moves is not stalled.
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b2', command: 'ls' })
   // An agent running off the flow is AFK work, first; needs you takes its place.
   expect(status()).toMatch(/^◇ AFK: working · 1 agent · 1\/2 · ⚠ 5h limit out in .+ · ctx 125k · 1\/2 tasks$/)
 

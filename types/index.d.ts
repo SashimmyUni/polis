@@ -307,6 +307,27 @@ export type FlowKind = 'HITL' | 'AFK'
 /** The phase a flow skill started, its kind, and the next step: in full, and its first move. */
 export type Flow = { phase: string; kind: FlowKind; next: string; first: string }
 
+/** The signs of whether work moves, as the turn's events left them. */
+export type Progress = {
+  /** When work last moved: a step, a tool call or an agent event. */
+  at: number
+  /** The tool calls in flight, by their tool_use_id, and since when. */
+  inFlight: { id: string; tool: string; at: number }[]
+  /** Each check kind failing now: how many runs in a row, and since the first. */
+  failing: { kind: CheckKind; count: number; since: number }[]
+  /**
+   * Each agent's last call (the main loop's under ''): the tool and its input,
+   * how many times in a row it made it, and since the first.
+   */
+  calls: { agentId: string; call: string; count: number; since: number }[]
+}
+
+/** Which sign says work is stalled. */
+export type StallReason = 'silent' | 'running' | 'failing' | 'repeating'
+
+/** Why work is stalled, in words, and since when it has not moved. */
+export type Stall = { reason: StallReason; why: string; since: number }
+
 export type Project = {
   root: string
   name: string
@@ -381,6 +402,7 @@ declare module 'claude-code' {
       others: LiveSession[]
       flow: Flow | null
       tracker: Tracker | null
+      progress: Progress
     }
   }
 }
