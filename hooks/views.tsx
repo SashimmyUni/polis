@@ -112,6 +112,8 @@ export type Model = {
   tracker?: Tracker | null
   /** The project's other live sessions. */
   others?: LiveSession[]
+  /** This session as its live record says it, while other sessions are live. */
+  thisSession?: LiveSession
   /** The phase the last flow skill started, with its kind and next step; null off the flow. */
   flow: Flow | null
 }
@@ -865,12 +867,84 @@ const portrait = (
   )
 }
 
+const LIVE_STATE_COLOR: Record<LiveSession['state'], string> = {
+  'needs you': C.fail,
+  working: C.run,
+  'your turn': C.muted,
+  idle: C.muted,
+}
+
+// Whether a live session is moving: what it waits on the person for, why it
+// stalled, or its state.
+const liveStateText = (one: LiveSession): string =>
+  one.state === 'needs you' && one.wait !== null
+    ? `needs you: ${one.wait.text}`
+    : one.state === 'working' && one.stall !== ''
+      ? `stalled: ${one.stall}`
+      : one.state
+
+// What a live session is doing, how far it has got, what it costs and what
+// comes next: only the parts it has.
+const liveDetail = (one: LiveSession): string =>
+  [
+    one.phase,
+    one.task,
+    one.tasksTotal > 0 ? `${one.tasksDone}/${one.tasksTotal}` : '',
+    one.contextTokens > 0 ? `ctx ${compact(one.contextTokens)} of ${compact(one.zoneLimit)}` : '',
+    one.tokens > 0 ? `${compact(one.tokens)} tokens` : '',
+    one.nextStep === '' ? '' : `next: ${one.nextStep}`,
+  ]
+    .filter(part => part !== '')
+    .join(' · ')
+
+// Every live session of the project, this one marked, newest activity first;
+// nothing while this session is the only one.
+const sessionsBlock = (el: El, m: Model): RenderElement[] => {
+  const { Box, Text } = el
+  const others = m.others ?? []
+  if (m.thisSession === undefined || others.length === 0) return []
+  const own = m.thisSession
+  const all = [own, ...others].sort((one, two) => two.updatedAt - one.updatedAt)
+  const tokens = all.reduce((sum, one) => sum + one.tokens, 0)
+  const cost = all.reduce((sum, one) => sum + one.costUsd, 0)
+
+  return [
+    heading(el, m, 'SESSIONS', `${all.length} live · ${compact(tokens)} tokens · $${cost.toFixed(2)}`),
+    ...all.map(one => {
+      const isOwn = one === own
+      const detail = liveDetail(one)
+
+      return (
+        <Box flexDirection="row" gap={1}>
+          <Text color={isOwn ? C.text : C.muted}>{isOwn ? '●' : '○'}</Text>
+          <Box flexDirection="column">
+            <Box flexDirection={isNarrow(m) ? 'column' : 'row'} gap={isNarrow(m) ? 0 : 1}>
+              <Text color={C.text} bold={isOwn} wrap={fit(m)}>
+                {one.title === '' ? 'untitled session' : one.title}
+              </Text>
+              <Text color={LIVE_STATE_COLOR[one.state]} wrap={fit(m)}>
+                {isOwn ? `${liveStateText(one)} · this session` : liveStateText(one)}
+              </Text>
+            </Box>
+            {detail !== '' && (
+              <Text color={C.muted} wrap={fit(m)}>
+                {detail}
+              </Text>
+            )}
+          </Box>
+        </Box>
+      )
+    }),
+  ]
+}
+
 const agentsView = (el: El, m: Model, Svg: SvgEl | undefined): RenderElement[] => {
   const { Box, Text } = el
   const rows = agentTree(m.agents.slice(-30))
   const earlier = earlierLog(m)
 
   return [
+    ...sessionsBlock(el, m),
     heading(el, m, 'AGENTS', `${m.agents.filter(isLive).length} working · ${m.agents.length} this session`),
     <Box flexDirection="row" gap={1}>
       {portrait(el, Svg, 'main', m.usage.mainFamilies, m.turn.isWorking)}
