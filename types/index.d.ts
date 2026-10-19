@@ -245,7 +245,7 @@ export type LiveSession = {
   state: 'needs you' | 'working' | 'your turn' | 'idle'
   /** What it waits on the person for first, and since when. */
   wait: { text: string; at: number } | null
-  /** Empty until the flow sets them. */
+  /** As the flow last set them; empty off the flow. */
   phase: string
   kind: string
   nextStep: string
@@ -300,6 +300,12 @@ export type Tracker = {
 export type MilestoneStatus = 'planned' | 'active' | 'done'
 
 export type Milestone = { id: string; title: string; status: MilestoneStatus }
+
+/** HITL work keeps the person close; AFK work runs without them. */
+export type FlowKind = 'HITL' | 'AFK'
+
+/** The phase a flow skill started, its kind, and the next step: in full, and its first move. */
+export type Flow = { phase: string; kind: FlowKind; next: string; first: string }
 
 export type Project = {
   root: string
@@ -373,6 +379,7 @@ declare module 'claude-code' {
       tick: number
       /** The project's other live sessions, as last read. */
       others: LiveSession[]
+      flow: Flow | null
       tracker: Tracker | null
     }
   }

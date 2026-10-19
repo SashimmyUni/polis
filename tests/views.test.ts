@@ -485,9 +485,11 @@ const everything = async ($: Engine, on: On): Promise<void> => {
     return { value: { exitCode: 0, stdout, stderr: '' } as never }
   })
   on('tool.call', { tool: 'Bash' }, () => ({ result: 'Exit code 1', isError: true }) as never)
+  on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
   await $.session.start(START)
   await clock.settle()
   await $.turn.start({ text: 'Write the text views of the dashboard', turnId: 'turn-1' })
+  await $.tool.call({ tool: 'Skill', tool_use_id: 's1', skill: 'to-tickets' } as never)
   await $.tool.call({ tool: 'TaskCreate', tool_use_id: 't1', subject: 'Write the text views', description: '' })
   await $.tool.call({ tool: 'TaskCreate', tool_use_id: 't2', subject: 'Test them', description: '' })
   await $.tool.call({ tool: 'TaskUpdate', tool_use_id: 't3', taskId: '1', status: 'in_progress' })
@@ -508,14 +510,16 @@ const everything = async ($: Engine, on: On): Promise<void> => {
 
 const LIMIT = /^⚠ 5h limit out in \d+m$/
 
-test('the band shows needs you, the limit warning, the smart zone and tasks done, then City and Hide', async ($, on) => {
+test('the band shows needs you, the limit warning, the next step, the smart zone and tasks done, then City and Hide', async ($, on) => {
   await everything($, on)
 
   for (const surface of BANDED) {
     const ui = await $.ui.mount({ ...bandAt(200), surface })
     expect(shown(await ui.findAll({ type: 'Text' }))).toEqual([
+      // Needs you takes the first slot over the AFK work running.
       '▲ needs you: permission for Write',
       expect.stringMatching(LIMIT),
+      'next: /clear, then /implement',
       'ctx 151k · out of the smart zone',
       '0/2 tasks',
     ])
@@ -524,7 +528,7 @@ test('the band shows needs you, the limit warning, the smart zone and tasks done
   }
 })
 
-test('as the band narrows it drops tasks done, the smart-zone tail, the smart zone, then the limit warning', async ($, on) => {
+test('as the band narrows it drops tasks done, the smart-zone tail, the smart zone, the next step, then the limit warning', { timeoutMs: 20_000 }, async ($, on) => {
   await everything($, on)
 
   for (const surface of BANDED) {
@@ -542,10 +546,13 @@ test('as the band narrows it drops tasks done, the smart-zone tail, the smart zo
       if (JSON.stringify(rows.at(-1)) !== JSON.stringify(row)) rows.push(row)
     }
     const NEEDS = '▲ needs you: permission for Write'
+    const NEXT = 'next: /clear, then /implement'
     expect(rows).toEqual([
-      [NEEDS, '⚠ limit', 'ctx 151k · out of the smart zone', '0/2 tasks'],
-      [NEEDS, '⚠ limit', 'ctx 151k · out of the smart zone'],
-      [NEEDS, '⚠ limit', 'ctx 151k'],
+      [NEEDS, '⚠ limit', NEXT, 'ctx 151k · out of the smart zone', '0/2 tasks'],
+      [NEEDS, '⚠ limit', NEXT, 'ctx 151k · out of the smart zone'],
+      [NEEDS, '⚠ limit', NEXT, 'ctx 151k'],
+      [NEEDS, '⚠ limit', NEXT],
+      [NEEDS, '⚠ limit', 'next: /clear'],
       [NEEDS, '⚠ limit'],
       [NEEDS],
     ])
@@ -640,7 +647,7 @@ const CITIES = [
 test('City opens with the band’s strip above the drawing, whole however narrow the pane', async ($, on) => {
   await everything($, on)
   const band = shown(await banded($, 'terminal', 200))
-  expect(band).toHaveLength(4)
+  expect(band).toHaveLength(5)
 
   for (const [surface, columns] of CITIES) {
     const { strip, drawing } = await cityStrip($, surface, columns)

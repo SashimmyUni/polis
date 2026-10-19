@@ -2,7 +2,7 @@
 // its own key, and reads the others'. The store is shared by every running
 // session of the mod: a value one sets, another gets on its next read
 // (checked with two concurrent sessions).
-import type { AgentRun, LiveSession, Task, Usage, Wait } from '../types'
+import type { AgentRun, Flow, LiveSession, Task, Usage, Wait } from '../types'
 import { clip, isBlocking, isLive, sessionState, taskStats, topWait, waitText } from './logic'
 
 // The part of the engine's store the records need. The seam where a store of
@@ -118,11 +118,13 @@ export type LiveParts = {
   agents: readonly AgentRun[]
   usage: Pick<Usage, 'contextTokens' | 'zoneLimit' | 'costUsd'>
   tokens: number
+  /** The flow as the last flow skill set it; null off the flow. */
+  flow: Flow | null
   now: number
 }
 
-// This session's record as the others read it. Phase, kind, next step and
-// stall stay empty until the flow sets them.
+// This session's record as the others read it. Phase, kind and next step
+// come from the flow, empty off it; the stall stays empty for now.
 export const liveSessionOf = (parts: LiveParts): LiveSession => {
   const top = topWait(parts.waits)
   const stats = taskStats(parts.tasks)
@@ -133,9 +135,9 @@ export const liveSessionOf = (parts: LiveParts): LiveSession => {
     title: parts.title,
     state: sessionState(parts.isWorking, parts.waits),
     wait: top !== undefined && isBlocking(top) ? { text: waitText(top), at: top.at } : null,
-    phase: '',
-    kind: '',
-    nextStep: '',
+    phase: parts.flow?.phase ?? '',
+    kind: parts.flow?.kind ?? '',
+    nextStep: parts.flow?.next ?? '',
     task: parts.tasks.find(task => task.status === 'in_progress')?.subject ?? '',
     agents: parts.agents.filter(isLive).length,
     tasksDone: stats.done,

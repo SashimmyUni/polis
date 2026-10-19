@@ -224,6 +224,22 @@ test('the mod keeps its record while the session runs and takes it away when it 
   expect(kept[key]).toBeUndefined()
 })
 
+test('the record carries the phase, kind and next step the flow set', NO_PAGE, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept: Record<string, unknown> = {}
+  world(on, kept)
+  on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
+  const key = `live:${ROOT}:session-1`
+
+  await $.session.start(START)
+  expect(kept[key]).toMatchObject({ phase: '', kind: '', nextStep: '' })
+
+  await $.turn.start({ text: 'Implement #51', turnId: 'turn-1' })
+  await $.tool.call({ tool: 'Skill', tool_use_id: 's-implement', skill: 'implement' } as never)
+  await clock.advance(2000)
+  expect(kept[key]).toMatchObject({ phase: 'implementing', kind: 'AFK', nextStep: '/code-review' })
+})
+
 test('another session that needs the person is named on the status line within five seconds, and goes when it is answered', NO_PAGE, async ($, on) => {
   const clock = mock.clock(on)
   const kept: Record<string, unknown> = {}
