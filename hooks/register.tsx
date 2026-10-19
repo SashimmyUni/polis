@@ -673,21 +673,28 @@ const actionsOf = ($: EngineInterface): Actions => ({
   stopTurn: () => stopTurn($),
 })
 
+// The session a model is loaded for; `here`, where known, gives this
+// session's own live record beside the others'.
+type ModelSession = Pick<Model, 'sessionId' | 'root' | 'isStill'> & { here?: Here }
+
 const load = async (
   $: EngineInterface,
-  session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
+  { here: at, ...session }: ModelSession,
   columns: number,
   aspect?: number,
 ): Promise<Model> => {
   await read($, tick)
   const record = await read($, project)
   const board = await read($, tasks)
+  const now = await $.clock.now()
+  const live = await read($, others)
 
   return {
-    now: await $.clock.now(),
+    now,
     columns,
     aspect,
     ...session,
+    ...(at === undefined || at.id === '' || live.length === 0 ? {} : { thisSession: await liveOf($, at, now) }),
     // A session whose start was not seen is placed by its project's record.
     root: session.root === '' ? (record?.root ?? '') : session.root,
     limits: await read($, limits),
@@ -707,7 +714,7 @@ const load = async (
     ui: await read($, ui),
     activity: await read($, activity),
     files: await read($, files),
-    others: await read($, others),
+    others: live,
     flow: await read($, flow),
     tracker: await read($, tracker),
     progress: await read($, progress),
@@ -721,9 +728,15 @@ let keeper: LiveKeeper | undefined
 const keepLive = async ($: EngineInterface, here: Here): Promise<void> => {
   if (keeper === undefined || here.id === '' || here.root === '') return
   const now = await $.clock.now()
+  await keeper.write(await liveOf($, here, now), now)
+}
+
+// This session's live record as it stands: what the others read of it.
+const liveOf = async ($: EngineInterface, here: Here, now: number): Promise<LiveSession> => {
   const measured = await read($, usage)
   const stall = stalledOf(await loadStrip($))
-  const record = liveSessionOf({
+
+  return liveSessionOf({
     sessionId: here.id,
     root: here.root,
     title: here.title,
@@ -737,7 +750,6 @@ const keepLive = async ($: EngineInterface, here: Here): Promise<void> => {
     stall: stall?.why ?? '',
     now,
   })
-  await keeper.write(record, now)
 }
 
 // What the others' records say without their times: a heartbeat alone is no
@@ -825,10 +837,11 @@ export const register: Register = (on, options) => {
   let wrapUpAsk: string | undefined
   // The project the page on disk is written under, once a session has started.
   let pageRoot: string | null = null
-  const session = (): Pick<Model, 'sessionId' | 'root' | 'isStill'> => ({
+  const session = (): ModelSession => ({
     sessionId: here.id,
     root: here.root,
     isStill,
+    here,
   })
 
   on('session.start', async ($, e, next) => {

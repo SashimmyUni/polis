@@ -119,7 +119,7 @@ The pane shows `◆ POLIS`, the project's name, the phase (see "Phase and next s
 | 2 | Project | Every session of this project, newest first, with the agents each ran and their sub-agents. |
 | 3 | City | The top strip (the band's elements: what needs you or HITL or AFK work, the limit warning, the next step, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). Button: **Full city** (f), which adds everything the project has finished, and then reads **Current city** to switch back (see "The full city"). |
 | 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task, then the wayfinder maps' frontier where there is one. |
-| 5 | Agents | The main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
+| 5 | Agents | Every live session of the project while more than this one runs; then the main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
 | 6 | Resources | Tokens, time and tool calls against expected; the context window; rate limits with a forecast for each, and cost; tokens by agent; what prompts usually cost in this project. |
 | 7 | Skills | Skills used this session, skills suggested for the work, and skills available. |
 
@@ -213,7 +213,7 @@ Polis keeps these records across sessions. All but the limit readings are keyed 
 - **The carried tasks (`tasks:<root>`):** the board's tasks, saved each time Claude finishes answering and when a session ends. The next session in the project starts with them (see below).
 - **The archive (`archive:<root>`):** every task the project has finished, for the full city. Each entry keeps the task's subject, district, verdict, when it was finished and its session. A task is added the first time it is saved as finished, and a session starting adds the finished tasks already on the carried board, so the week before the archive existed is kept (anything older is gone). A task reopened leaves the archive and shows as open work instead. The newest 2,000 are kept in full; older ones fold into an exact count per district, which the old towns show. A damaged or hand-edited archive is read back safely: anything malformed is dropped.
 - **The turn history:** the size, tokens, time and tool calls of your last 300 finished prompts. A prompt is recorded only when it ends with an answer. This is what the expected ranges are drawn from.
-- **The live records (`live:<root>:<session id>`):** one for each session of the project that is running now, written by that session alone: its title, whether it is working, idle, your turn or needs you, what it waits on you for and since when, the task in progress, agents working, tasks done out of all, its context against the smart-zone limit, tokens and cost. Its phase, kind of work (`HITL` or `AFK`) and next step as the flow last set them (see "Phase and next step"), empty off the flow. Why its work is stalled, in the band's words (`no progress`, `Bash running 17m`), empty while it is not. A session writes its record when it starts, within two seconds of a change, and every 30 seconds otherwise, and removes it when it ends; a record not written for two minutes is removed by the next session that reads it. Every running session reads the others' every five seconds.
+- **The live records (`live:<root>:<session id>`):** one for each session of the project that is running now, written by that session alone: its title, whether it is working, idle, your turn or needs you, what it waits on you for and since when, the task in progress, agents working, tasks done out of all, its context against the smart-zone limit, tokens and cost. Its phase, kind of work (`HITL` or `AFK`) and next step as the flow last set them (see "Phase and next step"), empty off the flow. Why its work is stalled, in the band's words (`no progress`, `Bash running 17m`), empty while it is not. A session writes its record when it starts, within two seconds of a change, and every 30 seconds otherwise, and removes it when it ends; a record not written for two minutes is removed by the next session that reads it. Every running session reads the others' every five seconds; the Agents view's Sessions block shows them.
 - **The limit readings (`limits`):** the readings of your account's usage-limit windows, kept for the pace forecast. They belong to the account and not to a project, so parallel sessions in any project add to one line.
 
 Polis also saves a small note of the room each surface gave the band and the pane, which helps explain a drawing that looks wrong somewhere.
@@ -913,7 +913,18 @@ When a read fails (offline, a timeout), the last read stays, and the heading add
 
 ### Agents
 
-Your main session first: its icon, `Main session`, `working` or `idle` (plus "city hall", its building on the map) and its own equipment line. Then one card per agent, nested by who started whom: an agent started by another agent is indented under it with a `└`, to seven levels. The heading shows `2 working · 7 this session`. Polis keeps the 60 most recent agents; this view draws the 30 most recent of them.
+**Sessions.** While another session of the project is running (worktrees count as the same project), the view opens with a SESSIONS block: every live session, this one among them, the most recently active first. The heading sums them: `2 live · 1.6M tokens · $3.50`. Each session takes two lines:
+
+```
+● Implement the Sessions block  working · this session
+  implementing · 3/7 · ctx 30k of 150k · 410k tokens · next: /code-review
+○ Write the docs  needs you: a plan to approve
+  writing the spec · Draft the manual · ctx 60k of 150k · 1.2M tokens · next: /to-tickets
+```
+
+The first line is the session's title (its first prompt; `untitled session` before one) and whether it is moving: `working`, `idle`, `needs you:` with what it waits on you for, or `stalled:` with why. `●` and `this session` mark the one you are in. The second line is its phase, the task in progress, tasks done of all, its context against its smart-zone limit, the tokens it has processed and its next step (see "Phase and next step"); parts a session does not have are left out, and the line is left out when it has none. Each session's figures come from its live record (see "What Polis remembers"), this one's included, so they are at most a few seconds old. With this session the only one running, there is no block. In a narrow pane the lines wrap instead of being cut.
+
+Then your main session: its icon, `Main session`, `working` or `idle` (plus "city hall", its building on the map) and its own equipment line. Then one card per agent, nested by who started whom: an agent started by another agent is indented under it with a `└`, to seven levels. The heading shows `2 working · 7 this session`. Polis keeps the 60 most recent agents; this view draws the 30 most recent of them.
 
 ![The agent types, each carrying the tools it uses most](images/agent-icons.svg)
 
