@@ -1016,6 +1016,20 @@ A turn is added to this project's history when the main session finishes it with
 | "Check failed: tests" | When a check (tests, lint, types or build) starts failing; several are listed together (see "Checks"). |
 | "The five-hour limit is on course to run out in about 1h20m, 1h20m before it resets" | Once for each usage window, when its pace puts it on course to run out before it resets (see "Usage limits"). |
 
+#### Notifications
+
+AFK work runs while you are away, so two things about it are raised as a native notification through your own notification channel (the one Claude Code's `preferredNotifChannel` setting names), titled **Polis**, its body naming the session by its first prompt (or, before one, as "A session in <project>"):
+
+| Notification | When |
+| --- | --- |
+| `"Implement #54" stalled: no progress` | Once when this session's AFK work becomes stalled, with the stall's reason (see "Stalled work"). Not again while the same stall lasts; a stall that clears and begins again, or one that turns to another reason, is a new one. |
+| `"Implement #54" is out of the smart zone: context 151k is past 150k` | Once when this session's context climbs past the smart-zone limit during AFK work (see "The smart zone"). The caution raises none. Again only after the context has dropped below the caution and climbed back. |
+
+- **Only the session it happened in notifies.** Another session's stall or crossing, read from the store all your sessions share, is never notified here, so two sessions never both notify for one event.
+- **No notification for waits.** A permission, a question or a turn waiting on you is Claude Code's to notify, and it does; Polis raises nothing for them.
+- **Where none is sent** (notifications turned off, no terminal that notifies, a run with no terminal) **or a hook refuses it**, the same text is shown as a toast instead, wherever toasts can draw.
+- There is no option for them.
+
 ### Troubleshooting
 
 | Symptom | Cause | What to do |

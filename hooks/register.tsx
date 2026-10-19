@@ -79,7 +79,8 @@ import { REPORT_FILE, reportOf } from './report'
 import { PAGE_FILES, PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
-import { flowOf, stalledOf } from './flow'
+import { flowOf, stalledOf, workKind } from './flow'
+import { raise, sessionName, stallText, zoneText } from './notify'
 import { NO_PROGRESS, agentEnded, callBegan, callEnded, callOf, checkRan, progressed } from './stall'
 import { GH_TIMEOUT, asTracker, isDue, readTracker } from './frontier'
 import { band, pane, stripElements, summary } from './views'
@@ -382,6 +383,9 @@ const loadStrip = async ($: EngineInterface): Promise<StripModel> => ({
 let stallSaid: string | undefined
 let stallReason: StallReason | undefined
 
+// This session as a notification names it; set once the mod registers.
+let nameHere = (): string => sessionName('', '')
+
 // Reads the stall rule now. A stall that begins (none before, or another
 // reason) is the moment to tell the person.
 const watchStall = async ($: EngineInterface): Promise<void> => {
@@ -393,7 +397,9 @@ const watchStall = async ($: EngineInterface): Promise<void> => {
   stallSaid = said
   stallReason = stall?.reason
   await refresh($, false)
-  if (hasBegun) await note($, 'stall', `Stalled: ${stall.why}`)
+  if (!hasBegun) return
+  await note($, 'stall', `Stalled: ${stall.why}`)
+  await raise($, stallText(nameHere(), stall.why))
 }
 
 // Work moved: a step, a tool call or an agent event.
@@ -833,6 +839,7 @@ export const register: Register = (on, options) => {
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
   let here: Here = NOWHERE
+  nameHere = () => sessionName(here.title, here.root)
   // What the main loop's wrap-up call asked the person this turn, if anything.
   let wrapUpAsk: string | undefined
   // The project the page on disk is written under, once a session has started.
@@ -1752,6 +1759,10 @@ export const register: Register = (on, options) => {
       if (crossed !== undefined) {
         $.ui.toast(zoneToast(crossed, tokens, limit))
         await note($, 'context', crossed === 'out' ? 'Out of the smart zone' : 'Smart-zone caution')
+        // Leaving the zone while the person is away is worth calling them back for.
+        if (crossed === 'out' && workKind(await loadStrip($)) === 'AFK') {
+          await raise($, zoneText(nameHere(), tokens, limit))
+        }
       }
       const known = await read($, limits)
       const hasLimits = e.rateLimits.length > 0 && (e.changed.includes('rateLimits') || known.length === 0)
