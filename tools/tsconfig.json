@@ -9,5 +9,7 @@
     "typeRoots": ["../node_modules/@types"],
     "types": ["node"]
   },
-  "include": ["."]
+  "include": ["."],
+  // The probe is a mod: the root tsconfig.json checks it against the engine's types.
+  "exclude": ["probe"]
 }

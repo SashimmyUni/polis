@@ -1,3 +1,5 @@
 {
-  "extends": "./.claude-plugin/types/tsconfig.json"
+  "extends": "./.claude-plugin/types/tsconfig.json",
+  // The generated config's list, plus the probe mod, which runs in the engine too.
+  "include": ["hooks", "types", "tests", "tools/probe/hooks"]
 }
