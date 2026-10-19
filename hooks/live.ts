@@ -94,17 +94,23 @@ const waitingOn = (others: readonly LiveSession[]): (LiveSession & { wait: { tex
 const elsewhere = (count: number): string =>
   count === 1 ? ' · +1 in another session' : count > 1 ? ` · +${count} in other sessions` : ''
 
-// Needs you as the strip shows it: what this session waits on the person for,
-// and how many other sessions do too; or, when only others do, the one
-// waiting longest by name. Nothing when no session needs the person.
-export const needsYouMark = (own: string | undefined, others: readonly LiveSession[]): string | undefined => {
+// What a session needs the person for, and since when.
+export type Need = { text: string; at: number }
+
+// Needs you as the strip shows it: of this session's need and the other
+// sessions', the one waiting longest, then how many others wait too. This
+// session's need is told plainly; another's, by its session's name.
+// Nothing when no session needs the person.
+export const needsYouMark = (own: Need | undefined, others: readonly LiveSession[]): string | undefined => {
   const waiting = waitingOn(others)
-  if (own !== undefined) return `▲ needs you: ${own}${elsewhere(waiting.length)}`
   const [first, ...rest] = waiting
+  if (own !== undefined && (first === undefined || own.at <= first.wait.at)) {
+    return `▲ needs you: ${own.text}${elsewhere(waiting.length)}`
+  }
   if (first === undefined) return undefined
   const where = first.title === '' ? 'another session' : `"${clip(first.title, 40)}"`
 
-  return `▲ needs you in ${where}: ${first.wait.text}${elsewhere(rest.length)}`
+  return `▲ needs you in ${where}: ${first.wait.text}${elsewhere(rest.length + (own === undefined ? 0 : 1))}`
 }
 
 // What a session's own record is made from.

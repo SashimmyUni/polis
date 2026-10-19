@@ -3,6 +3,7 @@
 // them) and the next step the flow calls for. Then the attention element: the
 // strip's first element, what the person should know before anything else.
 import { needsYouMark } from './live'
+import type { Need } from './live'
 import { about, isLive, taskStats, topNeed, waitText } from './logic'
 import { stallOf } from './stall'
 import type { AgentRun, Flow, FlowKind, LiveSession, Progress, Stall, Task, Turn, Wait } from '../types'
@@ -63,10 +64,10 @@ export const workKind = (m: AttentionInput): FlowKind | undefined => {
   return m.agents.some(isLive) || isLong ? 'AFK' : undefined
 }
 
-const ownNeed = (waits: readonly Wait[]): string | undefined => {
+const ownNeed = (waits: readonly Wait[]): Need | undefined => {
   const need = topNeed(waits)
 
-  return need === undefined ? undefined : waitText(need)
+  return need === undefined ? undefined : { text: waitText(need), at: need.at }
 }
 
 // Why this session's work is stalled: only AFK work while the turn runs and

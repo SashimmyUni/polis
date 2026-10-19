@@ -640,8 +640,10 @@ Where it shows:
 
 | Situation | Band and status line |
 | --- | --- |
-| This session and others need you | `▲ needs you: permission for Bash · +1 in another session` (or `· +2 in other sessions`). |
-| Only another session needs you | `▲ needs you in "Fix the login form": a plan to approve`, naming the session by its title (its first prompt). When several do, the one waiting longest is named and the rest are counted after it. A session with no title yet reads `in another session`. |
+| The session you are in has needed you longest | `▲ needs you: permission for Bash`, then `· +1 in another session` (or `· +2 in other sessions`) when others need you too. |
+| Another session has needed you longest | `▲ needs you in "Fix the login form": a plan to approve`, naming that session by its title (its first prompt), then the rest counted after it the same way, the session you are in among them. A session with no title yet reads `in another session`. |
+
+Whichever session asked first leads, across all of them, as within one session.
 
 Another session's wait shows here within about five seconds of it starting, and goes within about five seconds of being answered. A session that ends cleanly stops counting at once; one that stops without ending (a crash, a killed terminal) stops counting two minutes after it last wrote. The Overview, the city and the text city still show this session's waits only.
 
