@@ -78,13 +78,12 @@ export const checkRan = (progress: Progress, kinds: readonly CheckKind[], hasPas
 }
 
 // The rule at a moment: why the work is stalled and since when it stopped
-// moving, or nothing while it moves.
+// moving, or nothing while it moves. A call in flight is not silence, but
+// it hides no failing check or repeated call: those stand until cleared.
 export const stallOf = (progress: Progress, now: number): Stall | undefined => {
   const [oldest] = [...progress.inFlight].sort((one, two) => one.at - two.at)
-  if (oldest !== undefined) {
-    const ran = now - oldest.at
-
-    return ran >= RUNNING_FOR_MS ? { reason: 'running', why: `${oldest.tool} running ${about(ran)}`, since: oldest.at } : undefined
+  if (oldest !== undefined && now - oldest.at >= RUNNING_FOR_MS) {
+    return { reason: 'running', why: `${oldest.tool} running ${about(now - oldest.at)}`, since: oldest.at }
   }
   const [failing] = progress.failing.filter(run => run.count >= IN_A_ROW).sort((one, two) => one.since - two.since)
   if (failing !== undefined) {
@@ -92,7 +91,7 @@ export const stallOf = (progress: Progress, now: number): Stall | undefined => {
   }
   const [repeating] = progress.calls.filter(row => row.count >= IN_A_ROW).sort((one, two) => one.since - two.since)
   if (repeating !== undefined) return { reason: 'repeating', why: `same call ${repeating.count}×`, since: repeating.since }
-  if (now - progress.at >= SILENT_FOR_MS) return { reason: 'silent', why: 'no progress', since: progress.at }
+  if (oldest === undefined && now - progress.at >= SILENT_FOR_MS) return { reason: 'silent', why: 'no progress', since: progress.at }
 
   return undefined
 }

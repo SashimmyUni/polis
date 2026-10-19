@@ -921,6 +921,13 @@ export const isBlocking = (wait: Wait): boolean => wait.kind !== 'turn'
 export const topWait = (list: readonly Wait[]): Wait | undefined =>
   list.find(isBlocking) ?? list.find(wait => wait.kind === 'turn')
 
+// What holds work up until the person acts: the top wait when it blocks.
+export const topNeed = (list: readonly Wait[]): Wait | undefined => {
+  const top = topWait(list)
+
+  return top !== undefined && isBlocking(top) ? top : undefined
+}
+
 export const waitText = (wait: Wait): string => {
   if (wait.kind === 'permission') return `permission for ${clip(wait.tool ?? 'a tool', 28)}`
   if (wait.kind === 'question') return 'a question for you'

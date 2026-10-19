@@ -34,7 +34,7 @@ import type { CheckState } from './checks'
 import { cityAlt, layoutFor, quartersOf, renderCity } from './city'
 import { attentionOf, nextStepOf } from './flow'
 import { areasOfFiles, gitLine } from './codemap'
-import { hitlWaiting } from './frontier'
+import { hitlCount } from './frontier'
 import { avatarAlt, avatarSvg } from './icons'
 import {
   SIZE_LABEL,
@@ -62,6 +62,7 @@ import {
   taskStats,
   taskTree,
   topFamilies,
+  topNeed,
   topWait,
   waitMark,
   waitText,
@@ -280,11 +281,7 @@ const labelled = (
 }
 
 // The wait that holds work up until the person acts, if there is one.
-const blockerOf = (m: Pick<Model, 'waits'>): Wait | undefined => {
-  const top = topWait(m.waits)
-
-  return top !== undefined && isBlocking(top) ? top : undefined
-}
+const blockerOf = (m: Pick<Model, 'waits'>): Wait | undefined => topNeed(m.waits)
 
 // The agent a wait was raised by, in a few words; nothing for the main loop.
 const askerOf = (m: Model, wait: Wait): string => {
@@ -765,9 +762,9 @@ const frontierBlock = (el: El, m: Model): RenderElement[] => {
   const tracker = m.tracker ?? null
   const maps = (tracker?.maps ?? []).filter(map => map.open.length + map.claimed.length > 0)
   if (tracker === null || maps.length === 0) return []
-  const waiting = hitlWaiting(maps)
+  const hitl = hitlCount(maps)
   const note = [
-    waiting === 0 ? 'no HITL waiting' : `${waiting} HITL waiting`,
+    hitl === 0 ? 'no HITL' : `${hitl} HITL`,
     ...(tracker.isFailed ? [`as of ${about(m.now - tracker.at)}`] : []),
   ].join(' · ')
 
@@ -872,7 +869,6 @@ const portrait = (
 const LIVE_STATE_COLOR: Record<LiveSession['state'], string> = {
   'needs you': C.fail,
   working: C.run,
-  'your turn': C.muted,
   idle: C.muted,
 }
 
@@ -899,14 +895,14 @@ const liveDetail = (one: LiveSession): string =>
     .filter(part => part !== '')
     .join(' · ')
 
-// Every live session of the project, this one marked, newest activity first;
+// Every live session of the project, this one marked, the last changed first;
 // nothing while this session is the only one.
 const sessionsBlock = (el: El, m: Model): RenderElement[] => {
   const { Box, Text } = el
   const others = m.others ?? []
   if (m.thisSession === undefined || others.length === 0) return []
   const own = m.thisSession
-  const all = [own, ...others].sort((one, two) => two.updatedAt - one.updatedAt)
+  const all = [own, ...others].sort((one, two) => two.movedAt - one.movedAt)
   const tokens = all.reduce((sum, one) => sum + one.tokens, 0)
   const cost = all.reduce((sum, one) => sum + one.costUsd, 0)
 
@@ -925,7 +921,7 @@ const sessionsBlock = (el: El, m: Model): RenderElement[] => {
                 {one.title === '' ? 'untitled session' : one.title}
               </Text>
               <Text color={LIVE_STATE_COLOR[one.state]} wrap={fit(m)}>
-                {isOwn ? `${liveStateText(one)} · this session` : liveStateText(one)}
+                {isOwn ? `${liveStateText(one)} · you are here` : liveStateText(one)}
               </Text>
             </Box>
             {detail !== '' && (
@@ -1250,7 +1246,8 @@ export const summary = (m: Model): string => {
   const active = m.tasks.filter(task => task.status === 'in_progress')
   const { expected } = m.turn
   const phase = m.flow === null ? '' : ` · ${m.flow.phase}`
-  const blocker = blockerOf(m)
+  // The strip's first element, as the band shows it.
+  const attention = attentionOf(m)
   const checked = standingText(m.tasks)
   const ran = checksLine(m.checks)
   const forecasts = forecastsFor(m)
@@ -1271,7 +1268,7 @@ export const summary = (m: Model): string => {
 
   return [
     `Polis · ${m.project?.name ?? 'this project'}${phase}`,
-    ...(blocker === undefined ? [] : [`▲ Needs you: ${waitLine(m, blocker)}`]),
+    ...(attention === undefined ? [] : [attention.text]),
     `Progress: ${progress.percent}% (${progress.done}/${progress.total} ${progress.unit})`,
     `Tasks: ${stats.done} done · ${stats.active} active · ${stats.waiting} waiting` +
       (checked === '' ? '' : ` (${checked})`),
