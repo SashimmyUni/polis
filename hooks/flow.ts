@@ -3,8 +3,9 @@
 // them) and the next step the flow calls for. Then the attention element: the
 // strip's first element, what the person should know before anything else.
 import { needsYouMark } from './live'
-import { isBlocking, isLive, taskStats, topWait, waitText } from './logic'
-import type { AgentRun, Flow, FlowKind, LiveSession, Task, Turn, Wait } from '../types'
+import { about, isBlocking, isLive, taskStats, topWait, waitText } from './logic'
+import { stallOf } from './stall'
+import type { AgentRun, Flow, FlowKind, LiveSession, Progress, Stall, Task, Turn, Wait } from '../types'
 
 type Row = readonly [skills: readonly string[], phase: string, kind: FlowKind, next: string, first?: string]
 
@@ -46,6 +47,8 @@ export type AttentionInput = {
   flow: Flow | null
   /** The project's other live sessions: their needs join this session's. */
   others?: readonly LiveSession[]
+  /** Whether the work moves; without it, work is never stalled. */
+  progress?: Progress
 }
 
 // The kind of the work running now: the phase's while Claude works, else AFK
@@ -58,17 +61,31 @@ export const workKind = (m: AttentionInput): FlowKind | undefined => {
   return m.agents.some(isLive) || isLong ? 'AFK' : undefined
 }
 
+const ownNeed = (waits: readonly Wait[]): string | undefined => {
+  const top = topWait(waits)
+
+  return top !== undefined && isBlocking(top) ? waitText(top) : undefined
+}
+
+// Why this session's work is stalled: only AFK work while the turn runs and
+// nothing waits on the person here is ever stalled.
+export const stalledOf = (m: AttentionInput): Stall | undefined => {
+  if (m.progress === undefined || ownNeed(m.waits) !== undefined) return undefined
+  if (workKind(m) !== 'AFK') return undefined
+
+  return stallOf(m.progress, m.now)
+}
+
 // The strip's first element, chosen in its order: needs you (here, or in
-// another live session of the project), then HITL work, then AFK work; nothing
-// while idle. Later kinds (stalled work) join this one choice. `needs` never
-// drops off a narrow strip.
-export type Attention = { tone: 'needs' | 'work'; text: string }
+// another live session of the project), then stalled work, then HITL work,
+// then AFK work; nothing while idle. `needs` never drops off a narrow strip.
+export type Attention = { tone: 'needs' | 'stalled' | 'work'; text: string }
 
 export const attentionOf = (m: AttentionInput): Attention | undefined => {
-  const top = topWait(m.waits)
-  const own = top !== undefined && isBlocking(top) ? waitText(top) : undefined
-  const needs = needsYouMark(own, m.others ?? [])
+  const needs = needsYouMark(ownNeed(m.waits), m.others ?? [])
   if (needs !== undefined) return { tone: 'needs', text: needs }
+  const stall = stalledOf(m)
+  if (stall !== undefined) return { tone: 'stalled', text: `⚠ stalled ${about(m.now - stall.since)}: ${stall.why}` }
   const kind = workKind(m)
   if (kind === undefined) return undefined
   if (kind === 'HITL') return { tone: 'work', text: `◆ HITL: ${m.flow?.phase ?? 'working'}` }

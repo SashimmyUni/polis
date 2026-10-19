@@ -60,6 +60,7 @@ On the desktop app and in a terminal, Polis draws one band directly above the pr
 | `▲ needs you: permission for Bash` | First on the row, bold rose, and never left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan, or its answer ended by asking you something, here or in another running session of the project (see "What needs you"). |
 | `◆ HITL: grilling` | In its place while Claude works on HITL work (see "Phase and next step"): stay close, Claude will ask again soon. Grey. |
 | `◇ AFK: implementing · 3 agents · 4/7` | In its place while Claude works on AFK work: you can walk away. The phase, the agents running (left out at 0) and the tasks done of all (left out with no tasks). Off the flow it reads `◇ AFK: working …` and shows only while an agent runs or the turn has run two minutes. Grey. |
+| `⚠ stalled 6m: no progress` | In place of AFK work when that work has stopped moving: how long since it last moved, and why (see "Stalled work"). Rose. Gone as soon as work moves again. |
 | `⚠ 5h limit out in 1h20m` | Rose. Shown only while a usage limit is on course to run out before it resets, or as `⚠ 5h limit reached` once full (see "Usage limits"). Absent while every limit is fine. |
 | `next: /clear, then /implement` | The next step the flow calls for after the phase. Shown whenever a phase is known, working or not; cut to its first move (`next: /clear`) before it is left out. |
 | `ctx 122k` | The context the session holds, in tokens: grey inside the smart zone, amber from the smart-zone caution, and rose past the smart-zone limit, where it reads `ctx 151k · out of the smart zone`. Hidden while it reads 0. |
@@ -69,7 +70,7 @@ On the desktop app and in a terminal, Polis draws one band directly above the pr
 
 With nothing to show, the band holds just **City** and **Hide**. The project name, progress, agents, checks, this prompt's tokens, git and the current task are not on the band: the pane's views carry them.
 
-The band is always one row. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, elements go in this order: the task count, then the smart zone's `· out of the smart zone` tail, then the smart zone, then the next step, then the limit warning, then HITL or AFK work. What needs you, **City** and **Hide** are never dropped.
+The band is always one row. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, elements go in this order: the task count, then the smart zone's `· out of the smart zone` tail, then the smart zone, then the next step, then the limit warning, then HITL, AFK or stalled work. What needs you, **City** and **Hide** are never dropped.
 
 #### Phase and next step
 
@@ -136,7 +137,7 @@ While a session runs, Polis also writes the city into two HTML files, one for th
 | --- | --- |
 | The files | `<project root>/.polis/city.html` (the current city) and `<project root>/.polis/city-full.html` (the full city). The project root is the git repository root, or the session's working directory outside a repository. |
 | Beside them | `.polis/.gitignore` containing `*`, so the folder never shows in `git status`. |
-| The header | The project's name; what needs you (`▲ needs you: permission for Bash`), or else HITL or AFK work as on the band, or else whether the session is working or idle; the next step, where a phase is known; the smart-zone state (`ctx 122k`, amber at the caution, rose past the limit); tasks done out of all (`2/5 tasks done`); a link to the other page (**full city** or **current city**); and a one-line description of the city. |
+| The header | The project's name; what needs you (`▲ needs you: permission for Bash`), or else stalled, HITL or AFK work as on the band, or else whether the session is working or idle; the next step, where a phase is known; the smart-zone state (`ctx 122k`, amber at the caution, rose past the limit); tasks done out of all (`2/5 tasks done`); a link to the other page (**full city** or **current city**); and a one-line description of the city. |
 | What it shows | The city only. The Tasks, Agents and Resources views are not on the pages. |
 | When it is written | Each page, each time its picture changes. An idle session writes nothing. |
 | After the session | The files stay, as the last pictures. |
@@ -212,7 +213,7 @@ Polis keeps these records across sessions. All but the limit readings are keyed 
 - **The carried tasks (`tasks:<root>`):** the board's tasks, saved each time Claude finishes answering and when a session ends. The next session in the project starts with them (see below).
 - **The archive (`archive:<root>`):** every task the project has finished, for the full city. Each entry keeps the task's subject, district, verdict, when it was finished and its session. A task is added the first time it is saved as finished, and a session starting adds the finished tasks already on the carried board, so the week before the archive existed is kept (anything older is gone). A task reopened leaves the archive and shows as open work instead. The newest 2,000 are kept in full; older ones fold into an exact count per district, which the old towns show. A damaged or hand-edited archive is read back safely: anything malformed is dropped.
 - **The turn history:** the size, tokens, time and tool calls of your last 300 finished prompts. A prompt is recorded only when it ends with an answer. This is what the expected ranges are drawn from.
-- **The live records (`live:<root>:<session id>`):** one for each session of the project that is running now, written by that session alone: its title, whether it is working, idle, your turn or needs you, what it waits on you for and since when, the task in progress, agents working, tasks done out of all, its context against the smart-zone limit, tokens and cost. Its phase, kind of work (`HITL` or `AFK`) and next step as the flow last set them (see "Phase and next step"), empty off the flow. Room is kept for why it stalled, which stays empty for now. A session writes its record when it starts, within two seconds of a change, and every 30 seconds otherwise, and removes it when it ends; a record not written for two minutes is removed by the next session that reads it. Every running session reads the others' every five seconds; the Agents view's Sessions block shows them.
+- **The live records (`live:<root>:<session id>`):** one for each session of the project that is running now, written by that session alone: its title, whether it is working, idle, your turn or needs you, what it waits on you for and since when, the task in progress, agents working, tasks done out of all, its context against the smart-zone limit, tokens and cost. Its phase, kind of work (`HITL` or `AFK`) and next step as the flow last set them (see "Phase and next step"), empty off the flow. Why its work is stalled, in the band's words (`no progress`, `Bash running 17m`), empty while it is not. A session writes its record when it starts, within two seconds of a change, and every 30 seconds otherwise, and removes it when it ends; a record not written for two minutes is removed by the next session that reads it. Every running session reads the others' every five seconds; the Agents view's Sessions block shows them.
 - **The limit readings (`limits`):** the readings of your account's usage-limit windows, kept for the pace forecast. They belong to the account and not to a project, so parallel sessions in any project add to one line.
 
 Polis also saves a small note of the room each surface gave the band and the pane, which helps explain a drawing that looks wrong somewhere.
@@ -643,6 +644,21 @@ Where it shows:
 | Only another session needs you | `▲ needs you in "Fix the login form": a plan to approve`, naming the session by its title (its first prompt). When several do, the one waiting longest is named and the rest are counted after it. A session with no title yet reads `in another session`. |
 
 Another session's wait shows here within about five seconds of it starting, and goes within about five seconds of being answered. A session that ends cleanly stops counting at once; one that stops without ending (a crash, a killed terminal) stops counting two minutes after it last wrote. The Overview, the city and the text city still show this session's waits only.
+
+### Stalled work
+
+AFK work can stop moving with nothing to say so: a loop gone silent, a command that never returns, a fix that keeps failing, an agent doing the same thing over and over. Polis flags such work **stalled**, in rose, in place of the AFK element on the band, the status line and the city page's header, and in the session's live record:
+
+| Wording | When |
+| --- | --- |
+| `no progress` | No model step, tool call or agent starting or finishing for five minutes, with no tool call running. |
+| `Bash running 17m` | One tool call has been running for fifteen minutes or more. A call that runs an agent (Agent, Task) never counts: the agent's own steps show its progress. |
+| `tests failed 3×` | The same kind of check (tests, lint, types, build; see "Checks") has failed three runs in a row. The count goes on rising while it keeps failing. |
+| `same call 3×` | The same agent (or the main session) made the same tool call with the same input three times in a row. Other agents' calls in between do not break the row. |
+
+The element reads `⚠ stalled <time>: <why>`, the time counted from when the work last moved: the last event for `no progress`, the call's start, the first failure of the row, the first of the repeated calls. It goes as soon as work moves again: any step, tool call or agent event for `no progress`; the call ending for a long call; a passing run of that check for a failing one; that agent making a different call, or finishing, for a repeated one. A new prompt starts afresh. Each stall that begins is also noted once in the Overview's recent activity, as `Stalled: <why>`.
+
+Only AFK work while Claude is working can stall. HITL work, an idle session and a session where something needs you are never flagged, and needs you always comes first. The thresholds are fixed; there is no option for them.
 
 ### Usage limits
 

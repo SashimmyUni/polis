@@ -259,6 +259,8 @@ test('as the band narrows it drops tasks done, the smart-zone tail, the smart zo
   await measure(40)
   await here.clock.advance(12 * MINUTE)
   await measure(60)
+  // Work that moves is not stalled.
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'ls' })
 
   const rows: string[][] = []
   for (let columns = 200; columns >= 10; columns -= 1) {

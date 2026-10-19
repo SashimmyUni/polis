@@ -14,6 +14,7 @@ import type {
   Proc,
   Project,
   ProjectLog,
+  Progress,
   Range,
   SessionRecord,
   Skills,
@@ -116,6 +117,8 @@ export type Model = {
   thisSession?: LiveSession
   /** The phase the last flow skill started, with its kind and next step; null off the flow. */
   flow: Flow | null
+  /** Whether the work moves, for the stall rule; without it nothing is stalled. */
+  progress?: Progress
 }
 
 export type Actions = {
@@ -417,18 +420,17 @@ export type StripElement = { text: string; color: string; rank: number; isBold?:
 // The part of the model the strip is made from: all the status line reads.
 export type StripModel = Pick<
   Model,
-  'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'turn' | 'agents' | 'flow' | 'others'
+  'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'turn' | 'agents' | 'flow' | 'others' | 'progress'
 >
 
-// The strip's first element: needs you in rose, never dropped; HITL or AFK
-// work in the quiet colour, the last element dropped.
+// The strip's first element: needs you in rose, never dropped; stalled work
+// in rose, HITL or AFK work in the quiet colour, the last element dropped.
 const attentionElement = (m: StripModel): StripElement | undefined => {
   const attention = attentionOf(m)
   if (attention === undefined) return undefined
+  if (attention.tone === 'needs') return { text: attention.text, color: C.fail, rank: 0, isBold: true }
 
-  return attention.tone === 'needs'
-    ? { text: attention.text, color: C.fail, rank: 0, isBold: true }
-    : { text: attention.text, color: C.muted, rank: 1 }
+  return { text: attention.text, color: attention.tone === 'stalled' ? C.fail : C.muted, rank: 1 }
 }
 
 // The strip, in its one order: the attention element, the limit warning
