@@ -59,6 +59,22 @@ _Avoid_: waiting, your turn
 A main session that has ended its turn asking nothing of the person; nothing is blocked.
 _Avoid_: your turn, waiting
 
+**HITL work**:
+Work that will need the person again soon, such as grilling, prototyping or writing a spec: the person should stay close.
+_Avoid_: hands-on, interactive
+
+**AFK work**:
+Work that runs without the person until it ends or needs them, such as implementing, researching or cutting tickets: the person can walk away.
+_Avoid_: hands-off, background (that is a process), autonomous
+
+**Live session**:
+A session of the project whose process is running now, in the main working tree or any worktree of it.
+_Avoid_: open session, active session
+
+**Stalled**:
+AFK work that shows no sign of progress: silent for minutes, failing the same check again and again, or repeating the same call.
+_Avoid_: stuck, hung, frozen
+
 **Process**:
 A shell command Claude started in the background that is still running.
 _Avoid_: background, works, works yard (that is the building drawing them)
