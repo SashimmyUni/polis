@@ -218,7 +218,7 @@ export type Usage = {
   zoneOwed: ZoneLevel
 }
 
-export type WaitKind = 'permission' | 'question' | 'plan' | 'input' | 'turn'
+export type WaitKind = 'permission' | 'question' | 'plan' | 'input' | 'asked' | 'turn'
 
 /** Something Claude is waiting on the person for. */
 export type Wait = {
@@ -229,6 +229,39 @@ export type Wait = {
   /** The subagent loop that asked; absent for the main loop. */
   agentId?: string
   detail?: string
+  /** How many questions a turn that ended asking put to the person. */
+  count?: number
+}
+
+/**
+ * One running session of the project as the others see it: written under its
+ * own key while it runs, and gone when it ends or falls silent.
+ */
+export type LiveSession = {
+  sessionId: string
+  /** The project's root: the main working tree, for a worktree too. */
+  root: string
+  title: string
+  state: 'needs you' | 'working' | 'your turn' | 'idle'
+  /** What it waits on the person for first, and since when. */
+  wait: { text: string; at: number } | null
+  /** As the flow last set them; empty off the flow. */
+  phase: string
+  kind: string
+  nextStep: string
+  /** The task in progress, by its subject. */
+  task: string
+  /** Agents working. */
+  agents: number
+  tasksDone: number
+  tasksTotal: number
+  contextTokens: number
+  zoneLimit: number
+  tokens: number
+  costUsd: number
+  /** Why work has stalled; empty when it has not. */
+  stall: string
+  updatedAt: number
 }
 
 export type TurnRecord = {
@@ -240,9 +273,60 @@ export type TurnRecord = {
   at: number
 }
 
+/** How a wayfinder ticket waits: on the person, on no one, or a task (unmarked). */
+export type TicketMark = 'HITL' | 'AFK' | null
+
+/** One open map of the issue tracker, as far as the Tasks view shows it. */
+export type FrontierMap = {
+  number: number
+  name: string
+  /** Its open, unblocked, unclaimed tickets, in the map's order. */
+  open: { number: number; title: string; mark: TicketMark }[]
+  /** Its open tickets someone has taken, with who has them. */
+  claimed: { number: number; title: string; assignees: string[] }[]
+}
+
+/** The tracker's frontier as last read through `gh`, kept per project root. */
+export type Tracker = {
+  /** When the maps were last read whole. */
+  at: number
+  /** When a read was last tried: the next waits five minutes from it. */
+  triedAt: number
+  /** True when the last try failed and `maps` is the read before it. */
+  isFailed: boolean
+  maps: FrontierMap[]
+}
+
 export type MilestoneStatus = 'planned' | 'active' | 'done'
 
 export type Milestone = { id: string; title: string; status: MilestoneStatus }
+
+/** HITL work keeps the person close; AFK work runs without them. */
+export type FlowKind = 'HITL' | 'AFK'
+
+/** The phase a flow skill started, its kind, and the next step: in full, and its first move. */
+export type Flow = { phase: string; kind: FlowKind; next: string; first: string }
+
+/** The signs of whether work moves, as the turn's events left them. */
+export type Progress = {
+  /** When work last moved: a step, a tool call or an agent event. */
+  at: number
+  /** The tool calls in flight, by their tool_use_id, and since when. */
+  inFlight: { id: string; tool: string; at: number }[]
+  /** Each check kind failing now: how many runs in a row, and since the first. */
+  failing: { kind: CheckKind; count: number; since: number }[]
+  /**
+   * Each agent's last call (the main loop's under ''): the tool and its input,
+   * how many times in a row it made it, and since the first.
+   */
+  calls: { agentId: string; call: string; count: number; since: number }[]
+}
+
+/** Which sign says work is stalled. */
+export type StallReason = 'silent' | 'running' | 'failing' | 'repeating'
+
+/** Why work is stalled, in words, and since when it has not moved. */
+export type Stall = { reason: StallReason; why: string; since: number }
 
 export type Project = {
   root: string
@@ -314,6 +398,11 @@ declare module 'claude-code' {
       log: ProjectLog | null
       archive: Archive | null
       tick: number
+      /** The project's other live sessions, as last read. */
+      others: LiveSession[]
+      flow: Flow | null
+      tracker: Tracker | null
+      progress: Progress
     }
   }
 }

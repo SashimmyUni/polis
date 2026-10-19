@@ -262,6 +262,7 @@ test('git is asked at the start and as each turn comes back, and never between',
   world(on)
   const asked: string[] = []
   on('process.run', (_, e) => {
+    if (e.argv[0] !== 'git') return { value: { exitCode: 1, stdout: '', stderr: '' } as never }
     asked.push(`${e.argv.slice(0, 2).join(' ')} in ${e.init?.cwd} within ${e.init?.timeoutMs}`)
     const stdout =
       e.argv[1] === 'status'
@@ -324,7 +325,10 @@ test("the status line is the band's list in the band's order, with no checks and
   await $.session.measure(reading(40))
   await clock.advance(12 * 60_000)
   await $.session.measure(reading(60))
-  expect(status()).toMatch(/^⚠ 5h limit out in .+ · ctx 125k · 1\/2 tasks$/)
+  // Work that moves is not stalled.
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b2', command: 'ls' })
+  // An agent running off the flow is AFK work, first; needs you takes its place.
+  expect(status()).toMatch(/^◇ AFK: working · 1 agent · 1\/2 · ⚠ 5h limit out in .+ · ctx 125k · 1\/2 tasks$/)
 
   await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } })
   expect(status()).toMatch(/^▲ needs you: permission for Bash · ⚠ 5h limit out in .+ · ctx 125k · 1\/2 tasks$/)

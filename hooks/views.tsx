@@ -7,16 +7,20 @@ import type {
   Check,
   FamilyCounts,
   FileHit,
+  Flow,
   GitState,
   LimitTrack,
+  LiveSession,
   Proc,
   Project,
   ProjectLog,
+  Progress,
   Range,
   SessionRecord,
   Skills,
   Task,
   ToolFamily,
+  Tracker,
   Turn,
   TurnRecord,
   Ui,
@@ -28,10 +32,13 @@ import type {
 import { CHECK_KINDS, checkLines, checksLine, stateOf } from './checks'
 import type { CheckState } from './checks'
 import { cityAlt, layoutFor, quartersOf, renderCity } from './city'
+import { attentionOf, nextStepOf } from './flow'
 import { areasOfFiles, gitLine } from './codemap'
+import { hitlWaiting } from './frontier'
 import { avatarAlt, avatarSvg } from './icons'
 import {
   SIZE_LABEL,
+  about,
   agentTree,
   bar,
   clip,
@@ -102,8 +109,16 @@ export type Model = {
   isStill: boolean
   /** The project's archive less what is on the board: what the full city adds. */
   archived: Archive | null
-  /** The next step the flow calls for, in full and as its first move. Nothing sets it yet. */
-  nextStep?: { text: string; short: string }
+  /** The wayfinder maps' frontier as last read through `gh`, where it can be. */
+  tracker?: Tracker | null
+  /** The project's other live sessions. */
+  others?: LiveSession[]
+  /** This session as its live record says it, while other sessions are live. */
+  thisSession?: LiveSession
+  /** The phase the last flow skill started, with its kind and next step; null off the flow. */
+  flow: Flow | null
+  /** Whether the work moves, for the stall rule; without it nothing is stalled. */
+  progress?: Progress
 }
 
 export type Actions = {
@@ -403,32 +418,44 @@ const promptBlock = (el: El, m: Model, room: Room): RenderElement[] => {
 export type StripElement = { text: string; color: string; rank: number; isBold?: boolean; short?: string }
 
 // The part of the model the strip is made from: all the status line reads.
-export type StripModel = Pick<Model, 'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'nextStep'>
+export type StripModel = Pick<
+  Model,
+  'now' | 'waits' | 'limits' | 'usage' | 'tasks' | 'turn' | 'agents' | 'flow' | 'others' | 'progress'
+>
 
-// The strip, in its one order: what needs the person, the limit warning while
-// it fires, the next step where one is known, the smart zone and tasks done.
-// Empty where there is nothing to say.
+// The strip's first element: needs you in rose, never dropped; stalled work
+// in rose, HITL or AFK work in the quiet colour, the last element dropped.
+const attentionElement = (m: StripModel): StripElement | undefined => {
+  const attention = attentionOf(m)
+  if (attention === undefined) return undefined
+  if (attention.tone === 'needs') return { text: attention.text, color: C.fail, rank: 0, isBold: true }
+
+  return { text: attention.text, color: attention.tone === 'stalled' ? C.fail : C.muted, rank: 1 }
+}
+
+// The strip, in its one order: the attention element, the limit warning
+// while it fires, the next step where one is known, the smart zone and tasks
+// done. Empty where there is nothing to say.
 export const stripElements = (m: StripModel): StripElement[] => {
-  const blocker = blockerOf(m)
   const alert = limitAlert(forecastsFor(m), m.now)
+  const step = nextStepOf(m.flow)
   const context = m.usage.contextTokens
   const zone = zoneOf(context, m.usage.zoneLimit)
   const stats = taskStats(m.tasks)
   const strip: StripElement[] = []
-  if (blocker !== undefined) strip.push({ text: waitMark(blocker), color: C.fail, rank: 0, isBold: true })
-  if (alert !== undefined) strip.push({ text: alert, color: C.fail, rank: 1 })
-  if (m.nextStep !== undefined) {
-    strip.push({ text: m.nextStep.text, color: C.text, rank: 2, short: m.nextStep.short })
-  }
+  const attention = attentionElement(m)
+  if (attention !== undefined) strip.push(attention)
+  if (alert !== undefined) strip.push({ text: alert, color: C.fail, rank: 2 })
+  if (step !== undefined) strip.push({ text: step.text, color: C.text, rank: 3, ...(step.short === undefined ? {} : { short: step.short }) })
   if (context > 0) {
     const reading = `ctx ${compact(context)}`
     strip.push(
       zone === 'out'
-        ? { text: `${reading} · out of the smart zone`, color: ZONE_COLOR[zone], rank: 3, short: reading }
-        : { text: reading, color: ZONE_COLOR[zone], rank: 3 },
+        ? { text: `${reading} · out of the smart zone`, color: ZONE_COLOR[zone], rank: 4, short: reading }
+        : { text: reading, color: ZONE_COLOR[zone], rank: 4 },
     )
   }
-  if (stats.total > 0) strip.push({ text: `${stats.done}/${stats.total} tasks`, color: C.muted, rank: 4 })
+  if (stats.total > 0) strip.push({ text: `${stats.done}/${stats.total} tasks`, color: C.muted, rank: 5 })
 
   return strip
 }
@@ -724,6 +751,49 @@ const tasksView = (el: El, m: Model): RenderElement[] => {
       )
     }),
     ...(rows.length > 60 ? [empty(el, `+${rows.length - 60} more`)] : []),
+    ...frontierBlock(el, m),
+  ]
+}
+
+const TICKET_COLOR = { HITL: C.run, AFK: C.muted } as const
+
+// Each open map of the issue tracker: the tickets that can be taken next,
+// marked by whether they wait on the person, then those already taken. A
+// map with neither is left out, and so is the block without a map.
+const frontierBlock = (el: El, m: Model): RenderElement[] => {
+  const { Box, Text } = el
+  const tracker = m.tracker ?? null
+  const maps = (tracker?.maps ?? []).filter(map => map.open.length + map.claimed.length > 0)
+  if (tracker === null || maps.length === 0) return []
+  const waiting = hitlWaiting(maps)
+  const note = [
+    waiting === 0 ? 'no HITL waiting' : `${waiting} HITL waiting`,
+    ...(tracker.isFailed ? [`as of ${about(m.now - tracker.at)}`] : []),
+  ].join(' · ')
+
+  return [
+    heading(el, m, 'FRONTIER', note),
+    ...maps.flatMap(map => [
+      <Text color={C.text} bold wrap={fit(m)}>
+        {map.name}
+      </Text>,
+      ...map.open.map(ticket => (
+        <Box flexDirection="row" gap={1} marginLeft={2}>
+          {ticket.mark !== null && <Text color={TICKET_COLOR[ticket.mark]}>{ticket.mark}</Text>}
+          <Text color={C.text} wrap={fit(m)}>
+            {ticket.title}
+          </Text>
+        </Box>
+      )),
+      ...map.claimed.map(ticket => (
+        <Box flexDirection={isNarrow(m) ? 'column' : 'row'} gap={isNarrow(m) ? 0 : 1} marginLeft={2}>
+          <Text color={C.muted} wrap={fit(m)}>
+            {ticket.title}
+          </Text>
+          <Text color={C.agent}>{ticket.assignees.map(one => `@${one}`).join(' ')}</Text>
+        </Box>
+      )),
+    ]),
   ]
 }
 
@@ -799,12 +869,84 @@ const portrait = (
   )
 }
 
+const LIVE_STATE_COLOR: Record<LiveSession['state'], string> = {
+  'needs you': C.fail,
+  working: C.run,
+  'your turn': C.muted,
+  idle: C.muted,
+}
+
+// Whether a live session is moving: what it waits on the person for, why it
+// stalled, or its state.
+const liveStateText = (one: LiveSession): string =>
+  one.state === 'needs you' && one.wait !== null
+    ? `needs you: ${one.wait.text}`
+    : one.state === 'working' && one.stall !== ''
+      ? `stalled: ${one.stall}`
+      : one.state
+
+// What a live session is doing, how far it has got, what it costs and what
+// comes next: only the parts it has.
+const liveDetail = (one: LiveSession): string =>
+  [
+    one.phase,
+    one.task,
+    one.tasksTotal > 0 ? `${one.tasksDone}/${one.tasksTotal}` : '',
+    one.contextTokens > 0 ? `ctx ${compact(one.contextTokens)} of ${compact(one.zoneLimit)}` : '',
+    one.tokens > 0 ? `${compact(one.tokens)} tokens` : '',
+    one.nextStep === '' ? '' : `next: ${one.nextStep}`,
+  ]
+    .filter(part => part !== '')
+    .join(' · ')
+
+// Every live session of the project, this one marked, newest activity first;
+// nothing while this session is the only one.
+const sessionsBlock = (el: El, m: Model): RenderElement[] => {
+  const { Box, Text } = el
+  const others = m.others ?? []
+  if (m.thisSession === undefined || others.length === 0) return []
+  const own = m.thisSession
+  const all = [own, ...others].sort((one, two) => two.updatedAt - one.updatedAt)
+  const tokens = all.reduce((sum, one) => sum + one.tokens, 0)
+  const cost = all.reduce((sum, one) => sum + one.costUsd, 0)
+
+  return [
+    heading(el, m, 'SESSIONS', `${all.length} live · ${compact(tokens)} tokens · $${cost.toFixed(2)}`),
+    ...all.map(one => {
+      const isOwn = one === own
+      const detail = liveDetail(one)
+
+      return (
+        <Box flexDirection="row" gap={1}>
+          <Text color={isOwn ? C.text : C.muted}>{isOwn ? '●' : '○'}</Text>
+          <Box flexDirection="column">
+            <Box flexDirection={isNarrow(m) ? 'column' : 'row'} gap={isNarrow(m) ? 0 : 1}>
+              <Text color={C.text} bold={isOwn} wrap={fit(m)}>
+                {one.title === '' ? 'untitled session' : one.title}
+              </Text>
+              <Text color={LIVE_STATE_COLOR[one.state]} wrap={fit(m)}>
+                {isOwn ? `${liveStateText(one)} · this session` : liveStateText(one)}
+              </Text>
+            </Box>
+            {detail !== '' && (
+              <Text color={C.muted} wrap={fit(m)}>
+                {detail}
+              </Text>
+            )}
+          </Box>
+        </Box>
+      )
+    }),
+  ]
+}
+
 const agentsView = (el: El, m: Model, Svg: SvgEl | undefined): RenderElement[] => {
   const { Box, Text } = el
   const rows = agentTree(m.agents.slice(-30))
   const earlier = earlierLog(m)
 
   return [
+    ...sessionsBlock(el, m),
     heading(el, m, 'AGENTS', `${m.agents.filter(isLive).length} working · ${m.agents.length} this session`),
     <Box flexDirection="row" gap={1}>
       {portrait(el, Svg, 'main', m.usage.mainFamilies, m.turn.isWorking)}
@@ -1107,7 +1249,7 @@ export const summary = (m: Model): string => {
   const running = m.procs.filter(proc => proc.status === 'running')
   const active = m.tasks.filter(task => task.status === 'in_progress')
   const { expected } = m.turn
-  const phase = m.project === null || m.project.phase === '' ? '' : ` · ${m.project.phase}`
+  const phase = m.flow === null ? '' : ` · ${m.flow.phase}`
   const blocker = blockerOf(m)
   const checked = standingText(m.tasks)
   const ran = checksLine(m.checks)
@@ -1183,7 +1325,7 @@ export const pane = (
           {clip(m.project?.name ?? '', 28)}
         </Text>
         <Text color={C.muted} wrap="truncate-end">
-          {m.project?.phase ?? ''}
+          {m.flow?.phase ?? ''}
         </Text>
       </Box>
       <Box flexDirection="row" gap={1} flexWrap="wrap">

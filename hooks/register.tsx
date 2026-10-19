@@ -5,20 +5,26 @@ import type {
   AgentRun,
   AgentRunStatus,
   CheckKind,
+  LiveSession,
   Proc,
   RateLimit,
+  StallReason,
   Task,
   Turn,
   Ui,
   Usage,
   ViewName,
 } from '../types'
+import { WRAP_UP, askOf } from './ask'
 import { CHECK_LABEL, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
 import { GIT_DIFF, GIT_STATUS, areaOfPath, noteTouch, parseGit, taskOfEdit } from './codemap'
+import { CHANGE_MS, liveKeeper, liveSessionOf } from './live'
+import type { LiveKeeper } from './live'
 import {
   ASKING,
   SIZES,
   SIZING_RUBRIC,
+  about,
   addWait,
   asHistory,
   asProject,
@@ -35,6 +41,7 @@ import {
   forecastsOf,
   heuristicSize,
   hitFile,
+  isBlocking,
   isLive,
   limitName,
   limitToast,
@@ -72,6 +79,9 @@ import { REPORT_FILE, reportOf } from './report'
 import { PAGE_FILES, PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
+import { flowOf, stalledOf } from './flow'
+import { NO_PROGRESS, agentEnded, callBegan, callEnded, callOf, checkRan, progressed } from './stall'
+import { GH_TIMEOUT, asTracker, isDue, readTracker } from './frontier'
 import { band, pane, stripElements, summary } from './views'
 import type { Actions, Model, StripModel } from './views'
 
@@ -140,6 +150,10 @@ const git = atom({ plugin: 'polis', key: 'git' } as const, null)
 const log = atom({ plugin: 'polis', key: 'log' } as const, null)
 const archive = atom({ plugin: 'polis', key: 'archive' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
+const others = atom({ plugin: 'polis', key: 'others' } as const, [])
+const flow = atom({ plugin: 'polis', key: 'flow' } as const, null)
+const tracker = atom({ plugin: 'polis', key: 'tracker' } as const, null)
+const progress = atom({ plugin: 'polis', key: 'progress' } as const, NO_PROGRESS)
 
 const GUIDANCE = {
   id: 'polis:guidance',
@@ -285,6 +299,19 @@ const say = ($: EngineInterface, where: string, error: unknown): void => {
   $.ui.log(`polis: ${where}: ${String(error)}`)
 }
 
+// The phase a flow skill or command starts; one off the table leaves the
+// phase as it was.
+const startPhase = async ($: EngineInterface, name: string): Promise<void> => {
+  try {
+    const started = flowOf(name)
+    if (started === undefined) return
+    await update($, flow, () => started)
+    await refresh($, false)
+  } catch (error) {
+    say($, 'reading the phase', error)
+  }
+}
+
 const note = async ($: EngineInterface, kind: string, text: string): Promise<void> => {
   const at = await $.clock.now()
   await update($, activity, list => pushActivity(list, { at, kind, text }))
@@ -343,7 +370,38 @@ const loadStrip = async ($: EngineInterface): Promise<StripModel> => ({
   limits: await read($, limits),
   usage: await read($, usage),
   tasks: await read($, tasks),
+  others: await read($, others),
+  turn: await read($, turn),
+  agents: await read($, agents),
+  flow: await read($, flow),
+  progress: await read($, progress),
 })
+
+// Why the work stalled, as the strip last said it: the clock draws again only
+// when that changes, so the stall's age moves and a cleared stall leaves.
+let stallSaid: string | undefined
+let stallReason: StallReason | undefined
+
+// Reads the stall rule now. A stall that begins (none before, or another
+// reason) is the moment to tell the person.
+const watchStall = async ($: EngineInterface): Promise<void> => {
+  const model = await loadStrip($)
+  const stall = stalledOf(model)
+  const said = stall === undefined ? undefined : `${about(model.now - stall.since)}: ${stall.why}`
+  if (said === stallSaid) return
+  const hasBegun = stall !== undefined && stall.reason !== stallReason
+  stallSaid = said
+  stallReason = stall?.reason
+  await refresh($, false)
+  if (hasBegun) await note($, 'stall', `Stalled: ${stall.why}`)
+}
+
+// Work moved: a step, a tool call or an agent event.
+const move = async ($: EngineInterface, change = progressed): Promise<void> => {
+  const now = await $.clock.now()
+  await update($, progress, value => change(value, now))
+  await watchStall($)
+}
 
 const rootOf = async ($: EngineInterface): Promise<string> => {
   const repo = await $.session.repo().catch(() => null)
@@ -431,6 +489,32 @@ const readGit = async ($: EngineInterface, root: string): Promise<void> => {
     if (next !== null) await update($, git, () => next)
   } catch {
     // Not a repository, no git, or a slow one.
+  }
+}
+
+// The wayfinder frontier, asked of `gh` at most every five minutes, the time
+// kept with it so that parallel sessions of the project share the wait.
+let isReadingTracker = false
+
+const readFrontier = async ($: EngineInterface, root: string): Promise<void> => {
+  if (root === '' || isReadingTracker) return
+  isReadingTracker = true
+  try {
+    const key = `tracker:${root}`
+    const now = await $.clock.now()
+    const held = await read($, tracker)
+    const last = asTracker(await $.store.get(key)) ?? held
+    if (!isDue(last, now)) {
+      if (held === null && last !== null) await update($, tracker, () => last)
+      return
+    }
+    const next = await readTracker(argv => $.process.run(argv, { cwd: root, timeoutMs: GH_TIMEOUT }), last, now)
+    await update($, tracker, () => next)
+    await $.store.set(key, next)
+  } catch {
+    // The store refused it: the frontier stays as it was.
+  } finally {
+    isReadingTracker = false
   }
 }
 
@@ -589,21 +673,28 @@ const actionsOf = ($: EngineInterface): Actions => ({
   stopTurn: () => stopTurn($),
 })
 
+// The session a model is loaded for; `here`, where known, gives this
+// session's own live record beside the others'.
+type ModelSession = Pick<Model, 'sessionId' | 'root' | 'isStill'> & { here?: Here }
+
 const load = async (
   $: EngineInterface,
-  session: Pick<Model, 'sessionId' | 'root' | 'isStill'>,
+  { here: at, ...session }: ModelSession,
   columns: number,
   aspect?: number,
 ): Promise<Model> => {
   await read($, tick)
   const record = await read($, project)
   const board = await read($, tasks)
+  const now = await $.clock.now()
+  const live = await read($, others)
 
   return {
-    now: await $.clock.now(),
+    now,
     columns,
     aspect,
     ...session,
+    ...(at === undefined || at.id === '' || live.length === 0 ? {} : { thisSession: await liveOf($, at, now) }),
     // A session whose start was not seen is placed by its project's record.
     root: session.root === '' ? (record?.root ?? '') : session.root,
     limits: await read($, limits),
@@ -623,7 +714,55 @@ const load = async (
     ui: await read($, ui),
     activity: await read($, activity),
     files: await read($, files),
+    others: live,
+    flow: await read($, flow),
+    tracker: await read($, tracker),
+    progress: await read($, progress),
   }
+}
+
+// This session's live record, kept in the store the other running sessions
+// read, and its reading of theirs; set once the session has started.
+let keeper: LiveKeeper | undefined
+
+const keepLive = async ($: EngineInterface, here: Here): Promise<void> => {
+  if (keeper === undefined || here.id === '' || here.root === '') return
+  const now = await $.clock.now()
+  await keeper.write(await liveOf($, here, now), now)
+}
+
+// This session's live record as it stands: what the others read of it.
+const liveOf = async ($: EngineInterface, here: Here, now: number): Promise<LiveSession> => {
+  const measured = await read($, usage)
+  const stall = stalledOf(await loadStrip($))
+
+  return liveSessionOf({
+    sessionId: here.id,
+    root: here.root,
+    title: here.title,
+    isWorking: (await read($, turn)).isWorking,
+    waits: await read($, waits),
+    tasks: await read($, tasks),
+    agents: await read($, agents),
+    usage: measured,
+    tokens: here.tokensKept + Math.max(0, measured.sessionTokens - here.tokensFrom),
+    flow: await read($, flow),
+    stall: stall?.why ?? '',
+    now,
+  })
+}
+
+// What the others' records say without their times: a heartbeat alone is no
+// reason to draw again.
+const saidBy = (list: readonly LiveSession[]): string =>
+  JSON.stringify(list.map(one => ({ ...one, updatedAt: 0 })))
+
+const readLive = async ($: EngineInterface, here: Here): Promise<void> => {
+  if (keeper === undefined || here.root === '') return
+  const found = await keeper.others(here.root, here.id, await $.clock.now())
+  if (saidBy(found) === saidBy(await read($, others))) return
+  await update($, others, () => found)
+  await refresh($, false)
 }
 
 // The pages on disk: what was last written to each, and whether a failure
@@ -694,12 +833,15 @@ export const register: Register = (on, options) => {
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
   let here: Here = NOWHERE
+  // What the main loop's wrap-up call asked the person this turn, if anything.
+  let wrapUpAsk: string | undefined
   // The project the page on disk is written under, once a session has started.
   let pageRoot: string | null = null
-  const session = (): Pick<Model, 'sessionId' | 'root' | 'isStill'> => ({
+  const session = (): ModelSession => ({
     sessionId: here.id,
     root: here.root,
     isStill,
+    here,
   })
 
   on('session.start', async ($, e, next) => {
@@ -805,9 +947,24 @@ export const register: Register = (on, options) => {
       await saveArchive($, here, await read($, tasks))
       await saveSession($, here, false)
       void readGit($, root)
+      void readFrontier($, root)
       await refresh($, false)
     } catch (error) {
       say($, 'loading the project', error)
+    }
+
+    // The other running sessions of the project, and this one for them.
+    try {
+      keeper = liveKeeper({
+        get: key => $.store.get(key),
+        set: (key, value) => $.store.set(key, value),
+        delete: key => $.store.delete(key),
+        keys: () => $.store.keys(),
+      })
+      await keepLive($, here)
+      await readLive($, here)
+    } catch (error) {
+      say($, 'reading the live sessions', error)
     }
 
     // A pane left open across a reload asks again for its room: an open sets
@@ -825,11 +982,24 @@ export const register: Register = (on, options) => {
         const { isWorking } = await read($, turn)
         const runs = await read($, agents)
         if (isWorking || runs.some(isLive)) await update($, tick, count => count + 1)
+        // Off the flow, a long turn turns to AFK work on the clock alone.
+        if (isWorking && (await read($, flow)) === null) await refresh($, false)
+        // Silence and a call that never ends stall work on the clock alone.
+        await watchStall($)
         if (hasNewRoom) {
           hasNewRoom = false
           await $.store.set('rooms', rooms)
         }
       })().catch(() => undefined)
+    })
+
+    // This session's record follows it within two seconds and beats every
+    // thirty; the others' are read every five.
+    $.clock.every(CHANGE_MS, () => {
+      void keepLive($, here).catch(() => undefined)
+    })
+    $.clock.every(5000, () => {
+      void readLive($, here).catch(() => undefined)
     })
 
     // The page is there from the start, then follows the board.
@@ -846,6 +1016,12 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
+    try {
+      // The others stop counting this session at once.
+      if (keeper !== undefined && here.id !== '' && here.root !== '') await keeper.end(here.root, here.id)
+    } catch (error) {
+      say($, 'ending the live record', error)
+    }
     try {
       await saveSession($, here, true)
       await saveTasks($, here)
@@ -864,9 +1040,32 @@ export const register: Register = (on, options) => {
       await update($, activity, () => [])
       await update($, files, () => [])
       await update($, waits, () => [])
+      await update($, flow, () => null)
+      await update($, progress, () => NO_PROGRESS)
       // The process goes on under an id not yet known.
       here = { ...NOWHERE, root: here.root }
       await refresh($, false)
+    }
+
+    return next(e)
+  })
+
+  // A slash command naming a flow skill starts its phase. With guidance on, a
+  // smart-zone crossing reaches Claude once, beside the person's next prompt:
+  // never through the system prompt (ADR 0001).
+  on('prompt.submit', async ($, e, next) => {
+    if (e.command !== undefined) await startPhase($, e.command.name)
+    if (!hasGuidance) return next(e)
+    try {
+      const measured = await read($, usage)
+      if (measured.zoneOwed !== 'inside') {
+        const text = zoneNote(measured.zoneOwed, measured.contextTokens, measured.zoneLimit)
+        await update($, usage, value => ({ ...value, zoneOwed: 'inside' as const }))
+
+        return next({ ...e, context: [...(e.context ?? []), text] })
+      }
+    } catch (error) {
+      say($, 'prompt.submit', error)
     }
 
     return next(e)
@@ -879,24 +1078,6 @@ export const register: Register = (on, options) => {
       if (e.surfaces.length === 0) return composed
 
       return { sections: [...composed.sections, GUIDANCE] }
-    })
-
-    // A smart-zone crossing reaches Claude once, beside the person's next
-    // prompt: never through the system prompt (ADR 0001).
-    on('prompt.submit', async ($, e, next) => {
-      try {
-        const measured = await read($, usage)
-        if (measured.zoneOwed !== 'inside') {
-          const text = zoneNote(measured.zoneOwed, measured.contextTokens, measured.zoneLimit)
-          await update($, usage, value => ({ ...value, zoneOwed: 'inside' as const }))
-
-          return next({ ...e, context: [...(e.context ?? []), text] })
-        }
-      } catch (error) {
-        say($, 'prompt.submit', error)
-      }
-
-      return next(e)
     })
 
     // The mod's own tool writes nothing but the mod's own record.
@@ -1031,6 +1212,7 @@ export const register: Register = (on, options) => {
     }
     await update($, ui, value => ({ ...value, hasOpened: true }))
     void openPane($).catch(() => undefined)
+    await startPhase($, 'orchestrate')
     // A command.run hook holds the turn a submit would wait on: submit after it.
     $.clock.after(50, () => {
       void $.prompt
@@ -1054,8 +1236,17 @@ export const register: Register = (on, options) => {
         endedAt: now,
         expected: expectedFor(size, 'heuristic', past),
       }))
+      // A new prompt starts the signs of progress afresh.
+      await update($, progress, () => progressed(NO_PROGRESS, now))
       // The prompt is the person's answer to whatever the main loop waited on.
+      const answered = (await read($, waits)).some(
+        wait => wait.agentId === undefined && isBlocking(wait),
+      )
       await update($, waits, list => list.filter(wait => wait.agentId !== undefined))
+      wrapUpAsk = undefined
+      // A needs you the prompt answered leaves the strip at once, and work
+      // started may show HITL or AFK work.
+      if (answered || (await read($, flow)) !== null) await refresh($, false)
       here = await whereabouts($, here, now)
       if (here.title === '') here = { ...here, title: clip(e.text, 80) }
 
@@ -1095,6 +1286,7 @@ export const register: Register = (on, options) => {
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
     try {
+      await move($)
       const cost = result.usage
       if (cost !== null) {
         const work = cost.input_tokens + cost.cache_creation_input_tokens + cost.output_tokens
@@ -1141,11 +1333,21 @@ export const register: Register = (on, options) => {
       const { agentId } = e
       if (agentId === undefined) {
         const ended = await update($, turn, value => ({ ...value, isWorking: false, endedAt: now }))
-        // The turn is handed back: nothing of the main loop's waits on a tool any more.
+        // The turn is handed back: nothing of the main loop's waits on a tool
+        // any more, and a turn that ended asking the person something needs them.
+        const ask = e.reason === 'answer' ? askOf(e.answer, wrapUpAsk) : undefined
+        wrapUpAsk = undefined
         await update($, waits, list =>
           addWait(
             list.filter(wait => wait.agentId !== undefined),
-            { kind: 'turn', at: now },
+            ask === undefined
+              ? { kind: 'turn', at: now }
+              : {
+                  kind: 'asked',
+                  at: now,
+                  count: ask.count,
+                  ...(ask.detail === undefined ? {} : { detail: clip(ask.detail, 80) }),
+                },
           ),
         )
         here = { ...here, turns: here.turns + 1 }
@@ -1187,6 +1389,7 @@ export const register: Register = (on, options) => {
         }
         await update($, waits, list => list.filter(wait => wait.agentId !== agentId))
         if (status === 'done') await settleVerdict($, agentId, e.answer)
+        await move($, (value, now) => agentEnded(value, agentId, now))
       }
       await refresh($, shouldAutoOpen)
     } catch (error) {
@@ -1198,10 +1401,19 @@ export const register: Register = (on, options) => {
         await saveTasks($, here)
         await saveSession($, here, false)
         void readGit($, here.root)
+        void readFrontier($, here.root)
       } catch (error) {
         say($, 'saving the session', error)
       }
     }
+
+    return next(e)
+  })
+
+  // The desktop app's wrap-up call in the main loop: its ask is put to the
+  // person when the turn ends.
+  on('tool.call', { tool: WRAP_UP }, async ($, e, next) => {
+    if (e.agentId === undefined) wrapUpAsk = pick(e, 'ask')
 
     return next(e)
   })
@@ -1233,6 +1445,7 @@ export const register: Register = (on, options) => {
         value.isWorking ? { ...value, agents: value.agents + 1 } : value,
       )
       await note($, 'agent', `Agent started: ${label}`)
+      await move($)
       await refresh($, shouldAutoOpen)
     } catch (error) {
       say($, 'agent.spawn', error)
@@ -1275,6 +1488,8 @@ export const register: Register = (on, options) => {
       const family = familyOf(tool)
       const { agentId } = e
       began = await $.clock.now()
+      const start = { id: e.tool_use_id, tool, agentId: agentId ?? '', call: callOf({ ...e, tool }) }
+      await move($, (value, now) => callBegan(value, start, now))
       if (SHELLS.has(tool)) kinds = checksOf(pick(e, 'command') ?? '')
       // A question or a plan waits on the person for as long as its call is in flight.
       const asking = Object.hasOwn(ASKING, tool) ? ASKING[tool] : undefined
@@ -1325,6 +1540,7 @@ export const register: Register = (on, options) => {
     try {
       const { agentId } = e
       await endWaits($, tool, agentId)
+      await move($, (value, now) => callEnded(value, e.tool_use_id, now))
       const at = await $.clock.now()
       // A check is told by its command, its result by how the call ended.
       const hasPassed = kinds.length === 0 ? undefined : outcomeOf(ran, e)
@@ -1332,6 +1548,7 @@ export const register: Register = (on, options) => {
         const before = await read($, checks)
         const command = clip(pick(e, 'command') ?? '', 200)
         await update($, checks, list => recordChecks(list, kinds, { hasPassed, at, ms: at - began, command }))
+        await move($, (value, now) => checkRan(value, kinds, hasPassed, now))
         // One toast as a check starts failing, none for each run while it stays so.
         const broken = kinds.filter(
           kind => !hasPassed && before.find(check => check.kind === kind)?.hasPassed !== false,
@@ -1406,6 +1623,14 @@ export const register: Register = (on, options) => {
     }
 
     return ran
+  })
+
+  // A flow skill invoked in the main loop, or typed as a slash command,
+  // starts its phase; one off the table leaves the phase as it was.
+  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    if (e.agentId === undefined) await startPhase($, e.skill)
+
+    return next(e)
   })
 
   on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {

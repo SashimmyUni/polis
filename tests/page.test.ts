@@ -106,8 +106,9 @@ test('the header says what needs the person, the smart-zone state and the tasks 
 
   const past = cityPage({ ...small, usage: { ...small.usage, contextTokens: 160_000 } }, 'atlas')
   expect(past).toContain('<span class="out">ctx 160k: out of the smart zone</span>')
-  // Inside the smart zone the reading is quiet, and with nothing waiting the session's state stands first.
+  // Inside the smart zone the reading is quiet, and with nothing waiting the
+  // attention element, else the session's state, stands first.
   const calm = cityPage(small, 'atlas')
   expect(calm).toContain('<span>ctx 68k</span>')
-  expect(calm).toMatch(/<h1>atlas<\/h1><span>(working|your turn|idle)<\/span>/)
+  expect(calm).toMatch(/<h1>atlas<\/h1><span>(working|your turn|idle|◇ AFK: working[^<]*)<\/span>/)
 })

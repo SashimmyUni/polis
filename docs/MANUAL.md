@@ -57,8 +57,12 @@ On the desktop app and in a terminal, Polis draws one band directly above the pr
 
 | Element | Meaning |
 | --- | --- |
-| `▲ needs you: permission for Bash` | First on the row, bold rose, and never left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan (see "What needs you"). |
+| `▲ needs you: permission for Bash` | First on the row, bold rose, and never left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan, or its answer ended by asking you something, here or in another running session of the project (see "What needs you"). |
+| `◆ HITL: grilling` | In its place while Claude works on HITL work (see "Phase and next step"): stay close, Claude will ask again soon. Grey. |
+| `◇ AFK: implementing · 3 agents · 4/7` | In its place while Claude works on AFK work: you can walk away. The phase, the agents running (left out at 0) and the tasks done of all (left out with no tasks). Off the flow it reads `◇ AFK: working …` and shows only while an agent runs or the turn has run two minutes. Grey. |
+| `⚠ stalled 6m: no progress` | In place of AFK work when that work has stopped moving: how long since it last moved, and why (see "Stalled work"). Rose. Gone as soon as work moves again. |
 | `⚠ 5h limit out in 1h20m` | Rose. Shown only while a usage limit is on course to run out before it resets, or as `⚠ 5h limit reached` once full (see "Usage limits"). Absent while every limit is fine. |
+| `next: /clear, then /implement` | The next step the flow calls for after the phase. Shown whenever a phase is known, working or not; cut to its first move (`next: /clear`) before it is left out. |
 | `ctx 122k` | The context the session holds, in tokens: grey inside the smart zone, amber from the smart-zone caution, and rose past the smart-zone limit, where it reads `ctx 151k · out of the smart zone`. Hidden while it reads 0. |
 | `2/5 tasks` | Tasks done out of all tasks on the board, sub-tasks included. Hidden while the board is empty. |
 | **City** | Opens the pane at the City view. |
@@ -66,7 +70,26 @@ On the desktop app and in a terminal, Polis draws one band directly above the pr
 
 With nothing to show, the band holds just **City** and **Hide**. The project name, progress, agents, checks, this prompt's tokens, git and the current task are not on the band: the pane's views carry them.
 
-The band is always one row. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, elements go in this order: the task count, then the smart zone's `· out of the smart zone` tail, then the smart zone, then the limit warning. What needs you, **City** and **Hide** are never dropped.
+The band is always one row. If Claude Code is showing a survey in that spot, Polis steps aside until it is gone. When the row does not fit the width, elements go in this order: the task count, then the smart zone's `· out of the smart zone` tail, then the smart zone, then the next step, then the limit warning, then HITL, AFK or stalled work. What needs you, **City** and **Hide** are never dropped.
+
+#### Phase and next step
+
+Polis reads the phase of the work from the flow skills Claude invokes (Matt Pocock's flow), by the skill's name after any `plugin:` prefix, and from the same names typed as slash commands. The phase lasts until another skill of the table is invoked or the session is cleared; a skill not in the table leaves it as it was, and a subagent's skills never change it.
+
+| Skills | Phase | Kind | Next step |
+| --- | --- | --- | --- |
+| grilling, grill-me, grill-with-docs, domain-modeling | grilling | HITL | `/to-spec` |
+| prototype | prototyping | HITL | back to grilling |
+| wayfinder | wayfinding | HITL | the map's next ticket |
+| to-spec | writing the spec | HITL | `/to-tickets` |
+| to-tickets, to-ticket | cutting tickets | AFK | `/clear`, then `/implement` |
+| implement, implement-spec, tdd | implementing | AFK | `/code-review` |
+| research | researching | AFK | back to the ticket that asked |
+| code-review | reviewing | AFK | merge or fix |
+| diagnosing-bugs | diagnosing | AFK | `/code-review` |
+| `/orchestrate` | orchestrating | AFK | review the reports |
+
+Off the flow there is no phase and no next step, and nothing says "unknown". The phase also heads the pane and the `/city` text. The free-text phase Claude may give the project tool is not shown.
 
 **Hide** removes the band for the rest of the session. Running `/city` brings it back (and opens the pane). While the band is hidden, and wherever no surface has asked for a band, Polis puts the band's elements in the status line under the prompt instead, as plain text joined by ` · `, in the band's order, for example `▲ needs you: permission for Bash · ctx 125k · 2/5 tasks`. The line starts with whatever comes first; there is no `◆`. It uses the band's wording, smart zone included, and keeps every element, since it has no width of its own to fit. Checks and working agents are not on it, as they are not on the band. The line is cleared when there is nothing to say. Whether a host shows that line is up to the host.
 
@@ -88,15 +111,15 @@ Where nothing draws (a headless run), `/city project` answers with the project's
 
 Polis also opens the pane by itself, once per session, the first time tasks or agents appear, unless you have already opened it or `autoOpen` is off. If you close the pane, it stays closed. The host may hold back a pane you did not ask for (on a narrow terminal, for example); if it does not appear, run `/city`, because a pane you ask for is placed at any width.
 
-The pane shows `◆ POLIS`, the project's name and phase, and one tab per view. While the pane has the keyboard, the number on each tab switches to it.
+The pane shows `◆ POLIS`, the project's name, the phase (see "Phase and next step") and one tab per view. While the pane has the keyboard, the number on each tab switches to it.
 
 | Key | View | Shows |
 | --- | --- | --- |
 | 1 | Overview | What needs you, the project and this session, milestones and progress, this prompt against its expected range, tasks, checks, git, working agents, background processes, recent activity and the most-edited files. Buttons: **Orchestrate** (o), **Clear finished** (c), and **Stop turn** (s) while a prompt is running. |
 | 2 | Project | Every session of this project, newest first, with the agents each ran and their sub-agents. |
-| 3 | City | The top strip (the band's elements: what needs you, the limit warning, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). Button: **Full city** (f), which adds everything the project has finished, and then reads **Current city** to switch back (see "The full city"). |
-| 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task. |
-| 5 | Agents | The main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
+| 3 | City | The top strip (the band's elements: what needs you or HITL or AFK work, the limit warning, the next step, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). Button: **Full city** (f), which adds everything the project has finished, and then reads **Current city** to switch back (see "The full city"). |
+| 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task, then the wayfinder maps' frontier where there is one. |
+| 5 | Agents | Every live session of the project while more than this one runs; then the main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
 | 6 | Resources | Tokens, time and tool calls against expected; the context window; rate limits with a forecast for each, and cost; tokens by agent; what prompts usually cost in this project. |
 | 7 | Skills | Skills used this session, skills suggested for the work, and skills available. |
 
@@ -114,7 +137,7 @@ While a session runs, Polis also writes the city into two HTML files, one for th
 | --- | --- |
 | The files | `<project root>/.polis/city.html` (the current city) and `<project root>/.polis/city-full.html` (the full city). The project root is the git repository root, or the session's working directory outside a repository. |
 | Beside them | `.polis/.gitignore` containing `*`, so the folder never shows in `git status`. |
-| The header | The project's name; what needs you (`▲ needs you: permission for Bash`), or else whether the session is working or idle; the smart-zone state (`ctx 122k`, amber at the caution, rose past the limit); tasks done out of all (`2/5 tasks done`); a link to the other page (**full city** or **current city**); and a one-line description of the city. |
+| The header | The project's name; what needs you (`▲ needs you: permission for Bash`), or else stalled, HITL or AFK work as on the band, or else whether the session is working or idle; the next step, where a phase is known; the smart-zone state (`ctx 122k`, amber at the caution, rose past the limit); tasks done out of all (`2/5 tasks done`); a link to the other page (**full city** or **current city**); and a one-line description of the city. |
 | What it shows | The city only. The Tasks, Agents and Resources views are not on the pages. |
 | When it is written | Each page, each time its picture changes. An idle session writes nothing. |
 | After the session | The files stay, as the last pictures. |
@@ -135,7 +158,7 @@ Polis watches Claude's task tools and its agent spawns; you do not enter anythin
 - **TaskCreate and TaskUpdate.** `metadata.area` names the task's district (lowercased, cut to 24 characters); without it Polis infers one. `metadata.parent` is the id of the parent task, which makes the task a sub-task; a sub-task created with no area of its own joins its parent's district. A task made by a subagent hangs under the task that agent is working on unless `metadata.parent` says otherwise. `TaskUpdate` can set both on an existing task (giving a task a parent that way does not move it out of the district it already has), and the blockers it adds show as "waits on" in the Tasks view and as dashed arcs on the map.
 - **Agent spawns.** Each agent appears on the board and is matched to the open task whose subject best shares words with the agent's name and description; failing that, to the one task in progress, if there is exactly one. An agent that sets a task in progress, or is named as its owner, stands at that task.
 
-**The project tool.** Polis offers Claude a tool, `mcp__polis__project`, and Claude can call it without a permission prompt because it writes only Polis's own record. Claude uses it for milestones (an id, a title and a status of `planned`, `active` or `done`; ids match, so Claude sends only what changed), for the project's name and phase, and, in a session whose host gives Claude no task tool, for tasks (id, subject, status, area, parent, owner, blockers).
+**The project tool.** Polis offers Claude a tool, `mcp__polis__project`, and Claude can call it without a permission prompt because it writes only Polis's own record. Claude uses it for milestones (an id, a title and a status of `planned`, `active` or `done`; ids match, so Claude sends only what changed), for the project's name (a phase it gives is kept but not shown; see "Phase and next step"), and, in a session whose host gives Claude no task tool, for tasks (id, subject, status, area, parent, owner, blockers).
 
 **The standing instruction.** With `guidance` on, Polis adds a short section to Claude's system prompt:
 
@@ -190,6 +213,7 @@ Polis keeps these records across sessions. All but the limit readings are keyed 
 - **The carried tasks (`tasks:<root>`):** the board's tasks, saved each time Claude finishes answering and when a session ends. The next session in the project starts with them (see below).
 - **The archive (`archive:<root>`):** every task the project has finished, for the full city. Each entry keeps the task's subject, district, verdict, when it was finished and its session. A task is added the first time it is saved as finished, and a session starting adds the finished tasks already on the carried board, so the week before the archive existed is kept (anything older is gone). A task reopened leaves the archive and shows as open work instead. The newest 2,000 are kept in full; older ones fold into an exact count per district, which the old towns show. A damaged or hand-edited archive is read back safely: anything malformed is dropped.
 - **The turn history:** the size, tokens, time and tool calls of your last 300 finished prompts. A prompt is recorded only when it ends with an answer. This is what the expected ranges are drawn from.
+- **The live records (`live:<root>:<session id>`):** one for each session of the project that is running now, written by that session alone: its title, whether it is working, idle, your turn or needs you, what it waits on you for and since when, the task in progress, agents working, tasks done out of all, its context against the smart-zone limit, tokens and cost. Its phase, kind of work (`HITL` or `AFK`) and next step as the flow last set them (see "Phase and next step"), empty off the flow. Why its work is stalled, in the band's words (`no progress`, `Bash running 17m`), empty while it is not. A session writes its record when it starts, within two seconds of a change, and every 30 seconds otherwise, and removes it when it ends; a record not written for two minutes is removed by the next session that reads it. Every running session reads the others' every five seconds; the Agents view's Sessions block shows them.
 - **The limit readings (`limits`):** the readings of your account's usage-limit windows, kept for the pace forecast. They belong to the account and not to a project, so parallel sessions in any project add to one line.
 
 Polis also saves a small note of the room each surface gave the band and the pane, which helps explain a drawing that looks wrong somewhere.
@@ -226,7 +250,7 @@ VS Code has two places to run Claude Code, and Polis shows a different amount in
 A `/city` answer looks like this. A line is left out when it has nothing to say: with no checks run there is no `Checks:` line, and so on.
 
 ```
-Polis · atlas · Building the API
+Polis · atlas · implementing
 ▲ Needs you: permission for Bash · waiting 2m05s
 Progress: 50% (1/3 milestones)
 Tasks: 3 done · 1 active · 2 waiting (2 verified · 1 not checked)
@@ -244,7 +268,7 @@ Project: 12 sessions · 31 agents · 9 sub-agents · 4.2M tokens · $18.40
 
 | Line | What it says |
 | --- | --- |
-| `Polis · atlas · Building the API` | The project's name and, if Claude has set one, its phase. |
+| `Polis · atlas · implementing` | The project's name and, once a flow skill set one, the phase (see "Phase and next step"). |
 | `▲ Needs you:` | What holds Claude up until you act, and how long it has waited. Only while something does. |
 | `Progress:` | Milestones when the project has them, else the board's top-level tasks. |
 | `Tasks:` | Done, active and waiting, with a count in brackets of the finished tasks that were checked (see "Verified and done"). Up to five tasks in progress follow. |
@@ -506,7 +530,7 @@ Hovering works where the host draws the city as a picture and has a pointer, suc
 
 ### Size and the three layouts
 
-The City view opens with its top strip: the same elements as the band, in the band's order (what needs you, the limit warning while it fires, the smart zone and tasks done), so the band is a one-line preview of City. The pane has room the band lacks, so the strip drops nothing: it wraps as the pane narrows, and in the column layout it stacks one element to a line. With nothing to say there is no strip. It shows wherever the pane draws, VS Code included, where there is no band. Below the strip, the picture takes the rest of the view: nothing is written under it. Polis crops the drawing to what is built, then lets it out to the shape of the pane, so the city is as large as the pane allows. A pane that is wider or taller than the city gets more night sky around it, not a smaller city in a corner.
+The City view opens with its top strip: the same elements as the band, in the band's order (what needs you or HITL or AFK work, the limit warning while it fires, the next step, the smart zone and tasks done), so the band is a one-line preview of City. The pane has room the band lacks, so the strip drops nothing: it wraps as the pane narrows, and in the column layout it stacks one element to a line. With nothing to say there is no strip. It shows wherever the pane draws, VS Code included, where there is no band. Below the strip, the picture takes the rest of the view: nothing is written under it. Polis crops the drawing to what is built, then lets it out to the shape of the pane, so the city is as large as the pane allows. A pane that is wider or taller than the city gets more night sky around it, not a smaller city in a corner.
 
 Polis works out the pane's shape from the size the host reports, and picks the layout that draws the city largest in it (the column only when it is at least a quarter larger, since its key is a list and not on the buildings):
 
@@ -588,16 +612,19 @@ This chapter covers what Polis tells you beyond the shape of the work: what is w
 
 ### What needs you
 
-Claude sometimes stops and waits for you. Polis marks four kinds of wait:
+Claude sometimes stops and waits for you. Polis marks five kinds of wait:
 
 | Wait | Wording | When |
 | --- | --- | --- |
 | Permission | `permission for Bash` | A tool call is held for your leave. The tool's name is cut to 28 characters. |
 | Question | `a question for you` | Claude asked you something with AskUserQuestion. The question itself is shown beneath it in the Overview. |
 | Plan | `a plan to approve` | Claude asked you to approve a plan (ExitPlanMode). |
-| Your turn | `your turn` | Claude finished answering and handed the turn back. |
+| Asked | `a question for you` or `3 questions for you` | Claude's answer ended by asking you something (see below). |
+| Your turn | `your turn` | Claude finished answering, asking nothing, and handed the turn back. |
 
-The first three hold work up and are called **needs you**; they are shown in rose, with a `▲`. `your turn` is quieter (`◇`, amber in the city) and is not shown in the band or the status line. A wait ends when the call that raised it ends (allowed, denied or failed), when you send your next prompt (which answers whatever the main session waited on), or when the agent that raised it finishes. The same loop asking again for the same tool replaces its earlier request. When several things wait, the oldest one is shown first.
+A turn of the main session counts as asking you something when the first of these holds: the desktop app's wrap-up box asks you a question (`a question for you`, with the question beneath it in the Overview); the answer holds a round of two or more numbered questions, marked `❓` or `**Q1**` (`3 questions for you`); or the answer's last paragraph, past any closing markup, ends with `?` (`a question for you`). Polis reads this from the answer itself, with no call to a model. A subagent's answer, a turn you stopped and a refused turn never count.
+
+All but `your turn` hold work up and are called **needs you**; they are shown in rose, with a `▲`. `your turn` is quieter (`◇`, amber in the city) and is not shown in the band or the status line. A wait ends when the call that raised it ends (allowed, denied or failed), when you send your next prompt (which answers whatever the main session waited on), or when the agent that raised it finishes. The same loop asking again for the same tool replaces its earlier request. When several things wait, the oldest one is shown first.
 
 Where it shows:
 
@@ -608,6 +635,30 @@ Where it shows:
 | Overview | A `▲ NEEDS YOU` block above everything else, up to three waits, each as `permission for Bash · asked by writer · waiting 2m05s` (the `asked by` part only when an agent raised it), with the question's text beneath it. |
 | City | The flag on City Hall turns rose, a speech bubble with `!` rises over the main session's figure, and the first callout reads `session needs you` (or `your turn`, amber). |
 | Text city and `/city` answer | `◆ city hall needs you`, then `▲ needs you: permission for Bash · waiting 2m05s`; the `/city` answer puts it on its second line. |
+
+**Other live sessions.** Every running session of the project (worktrees count as the same project) tells the others what it is doing, so the band and the status line also say when another session needs you:
+
+| Situation | Band and status line |
+| --- | --- |
+| This session and others need you | `▲ needs you: permission for Bash · +1 in another session` (or `· +2 in other sessions`). |
+| Only another session needs you | `▲ needs you in "Fix the login form": a plan to approve`, naming the session by its title (its first prompt). When several do, the one waiting longest is named and the rest are counted after it. A session with no title yet reads `in another session`. |
+
+Another session's wait shows here within about five seconds of it starting, and goes within about five seconds of being answered. A session that ends cleanly stops counting at once; one that stops without ending (a crash, a killed terminal) stops counting two minutes after it last wrote. The Overview, the city and the text city still show this session's waits only.
+
+### Stalled work
+
+AFK work can stop moving with nothing to say so: a loop gone silent, a command that never returns, a fix that keeps failing, an agent doing the same thing over and over. Polis flags such work **stalled**, in rose, in place of the AFK element on the band, the status line and the city page's header, and in the session's live record:
+
+| Wording | When |
+| --- | --- |
+| `no progress` | No model step, tool call or agent starting or finishing for five minutes, with no tool call running. |
+| `Bash running 17m` | One tool call has been running for fifteen minutes or more. A call that runs an agent (Agent, Task) never counts: the agent's own steps show its progress. |
+| `tests failed 3×` | The same kind of check (tests, lint, types, build; see "Checks") has failed three runs in a row. The count goes on rising while it keeps failing. |
+| `same call 3×` | The same agent (or the main session) made the same tool call with the same input three times in a row. Other agents' calls in between do not break the row. |
+
+The element reads `⚠ stalled <time>: <why>`, the time counted from when the work last moved: the last event for `no progress`, the call's start, the first failure of the row, the first of the repeated calls. It goes as soon as work moves again: any step, tool call or agent event for `no progress`; the call ending for a long call; a passing run of that check for a failing one; that agent making a different call, or finishing, for a repeated one. A new prompt starts afresh. Each stall that begins is also noted once in the Overview's recent activity, as `Stalled: <why>`.
+
+Only AFK work while Claude is working can stall. HITL work, an idle session and a session where something needs you are never flagged, and needs you always comes first. The thresholds are fixed; there is no option for them.
 
 ### Usage limits
 
@@ -847,9 +898,33 @@ After the title, small tags:
 
 At most 60 rows are drawn; the rest collapse to `+12 more`. In a narrow pane the tags move under the title.
 
+#### Frontier
+
+Where the project's issues live on GitHub and are planned with `/wayfinder`, the Tasks view ends with a **FRONTIER** block: one entry per open issue labelled `wayfinder:map`, under the map's title (less its `Map:` prefix).
+
+- First, the map's frontier: its open sub-issues that nobody is assigned to and that wait on no open issue, in the map's order. Each is marked by its label: `HITL` (amber) for `wayfinder:grilling` and `wayfinder:prototype`, which need a session with you; `AFK` (gray) for `wayfinder:research`, which runs without you; a `wayfinder:task` ticket is left unmarked.
+- Then its claimed tickets: open sub-issues someone is assigned to, dimmer, with each assignee as `@login` (blue).
+
+The heading counts the `HITL` tickets waiting across the maps: `3 HITL waiting`, or `no HITL waiting`. A map with nothing open and unblocked and nothing claimed is left out.
+
+Polis reads the tracker with `gh` (`gh issue list` for the maps, then `gh api …/sub_issues` for each), in the project's root, each call given 10 seconds. It reads at the start of a session and each time a turn comes back, at most once every 5 minutes, and keeps the read in its store under `tracker:<root>`, so that another session of the project started within those 5 minutes uses it instead of asking again. No model call or tool call of Claude's is involved.
+
+When a read fails (offline, a timeout), the last read stays, and the heading adds its age: `3 HITL waiting · as of 12m`. Without `gh` on the path, with `gh` not signed in, without a GitHub remote, or without any open map, there is no block and nothing is said. Polis only reads the tracker: it never assigns, comments on or closes an issue.
+
 ### Agents
 
-Your main session first: its icon, `Main session`, `working` or `idle` (plus "city hall", its building on the map) and its own equipment line. Then one card per agent, nested by who started whom: an agent started by another agent is indented under it with a `└`, to seven levels. The heading shows `2 working · 7 this session`. Polis keeps the 60 most recent agents; this view draws the 30 most recent of them.
+**Sessions.** While another session of the project is running (worktrees count as the same project), the view opens with a SESSIONS block: every live session, this one among them, the most recently active first. The heading sums them: `2 live · 1.6M tokens · $3.50`. Each session takes two lines:
+
+```
+● Implement the Sessions block  working · this session
+  implementing · 3/7 · ctx 30k of 150k · 410k tokens · next: /code-review
+○ Write the docs  needs you: a plan to approve
+  writing the spec · Draft the manual · ctx 60k of 150k · 1.2M tokens · next: /to-tickets
+```
+
+The first line is the session's title (its first prompt; `untitled session` before one) and whether it is moving: `working`, `idle`, `needs you:` with what it waits on you for, or `stalled:` with why. `●` and `this session` mark the one you are in. The second line is its phase, the task in progress, tasks done of all, its context against its smart-zone limit, the tokens it has processed and its next step (see "Phase and next step"); parts a session does not have are left out, and the line is left out when it has none. Each session's figures come from its live record (see "What Polis remembers"), this one's included, so they are at most a few seconds old. With this session the only one running, there is no block. In a narrow pane the lines wrap instead of being cut.
+
+Then your main session: its icon, `Main session`, `working` or `idle` (plus "city hall", its building on the map) and its own equipment line. Then one card per agent, nested by who started whom: an agent started by another agent is indented under it with a `└`, to seven levels. The heading shows `2 working · 7 this session`. Polis keeps the 60 most recent agents; this view draws the 30 most recent of them.
 
 ![The agent types, each carrying the tools it uses most](images/agent-icons.svg)
 
