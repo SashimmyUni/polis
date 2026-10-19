@@ -233,6 +233,25 @@ test('off the flow there is no phase and no next step, and AFK shows only while 
   expect(here.status()).toBe('◇ AFK: working · 1 agent · ctx 20k')
 })
 
+test('off the flow, a turn that has put anything to the person is not AFK work by its length, even once answered', async ($, on) => {
+  const here = world(on)
+  await $.session.start(START)
+  await $.turn.start({ text: 'Clean the build', turnId: 'turn-1' })
+  await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'rm -rf build' } })
+  // The person allowed it: the call runs and ends, and nothing is open now.
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b1', command: 'rm -rf build' })
+  expect(here.status()).toBe('ctx 20k')
+
+  await here.clock.advance(3 * MINUTE)
+  expect(here.status()).toBe('ctx 20k')
+
+  // The next turn starts afresh.
+  await $.turn.complete(turnEnd('turn-1'))
+  await $.turn.start({ text: 'Fix the build', turnId: 'turn-2' })
+  await here.clock.advance(2 * MINUTE)
+  expect(here.status()).toBe('◇ AFK: working · ctx 20k')
+})
+
 test('needs you takes the first slot over HITL work', async ($, on) => {
   const here = world(on)
   await $.session.start(START)

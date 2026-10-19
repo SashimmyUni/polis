@@ -179,6 +179,47 @@ test('the same check failing three times in a row stalls work until it passes', 
   expect(here.status()).toBe(AFK)
 })
 
+test('a failing check or a repeated call stays stalled while another call is in flight, and says how many times', SLOW, async ($, on) => {
+  const here = world(on)
+  await implementing($)
+  here.bash.isFailing = true
+  for (const id of ['b1', 'b2', 'b3']) await $.tool.call({ tool: 'Bash', tool_use_id: id, command: 'npm test' })
+  expect(here.status()).toBe('⚠ stalled under 1m: tests failed 3× · next: /code-review · ctx 20k')
+
+  // A short call running is no reason to hide it.
+  here.bash.isFailing = false
+  let release = () => {}
+  here.bash.hold = new Promise(resolve => (release = resolve))
+  const running = $.tool.call({ tool: 'Bash', tool_use_id: 'b4', command: 'ls' })
+  await here.clock.advance(MINUTE)
+  expect(here.status()).toBe('⚠ stalled 1m: tests failed 3× · next: /code-review · ctx 20k')
+  release()
+  await running
+  here.bash.hold = undefined
+
+  // A fourth failure is told as such.
+  here.bash.isFailing = true
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'b5', command: 'npm test' })
+  expect(here.status()).toBe('⚠ stalled 1m: tests failed 4× · next: /code-review · ctx 20k')
+})
+
+test('an agent repeating a call stays stalled while that call is in flight', SLOW, async ($, on) => {
+  const here = world(on)
+  await implementing($)
+  for (const id of ['b1', 'b2', 'b3']) {
+    await $.tool.call({ tool: 'Bash', tool_use_id: id, command: 'cat log.txt', agentId: 'agent-1' } as never)
+  }
+  expect(here.status()).toBe('⚠ stalled under 1m: same call 3× · next: /code-review · ctx 20k')
+
+  let release = () => {}
+  here.bash.hold = new Promise(resolve => (release = resolve))
+  const running = $.tool.call({ tool: 'Bash', tool_use_id: 'b4', command: 'cat log.txt', agentId: 'agent-1' } as never)
+  await here.clock.advance(MINUTE)
+  expect(here.status()).toBe('⚠ stalled 1m: same call 4× · next: /code-review · ctx 20k')
+  release()
+  await running
+})
+
 const LIVE = `live:${ROOT}:session-1`
 const stallKept = (here: World): unknown => (here.kept[LIVE] as { stall?: unknown } | undefined)?.stall
 

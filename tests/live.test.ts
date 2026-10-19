@@ -47,6 +47,7 @@ const live = (sessionId: string, at: number, extra: Partial<LiveSession> = {}): 
   costUsd: 0,
   stall: '',
   updatedAt: at,
+  movedAt: at,
   ...extra,
 })
 
@@ -97,6 +98,8 @@ test('a record is written on change at most every two seconds, and unchanged eve
   expect(await at(31_999)).toBe(false)
   expect(await at(32_000)).toBe(true)
   expect((store.kept.get(`live:${ROOT}:a`) as LiveSession).updatedAt).toBe(T0 + 32_000)
+  // The heartbeat leaves when it last changed.
+  expect((store.kept.get(`live:${ROOT}:a`) as LiveSession).movedAt).toBe(T0 + 2000)
 })
 
 test('after a /clear the session writes under its new id at once and the old record goes', async () => {
@@ -112,13 +115,15 @@ test('after a /clear the session writes under its new id at once and the old rec
 const asking = (sessionId: string, title: string, text: string, at: number): LiveSession =>
   live(sessionId, at, { title, state: 'needs you', wait: { text, at } })
 
+const PLAN = { text: 'a plan to approve', at: T0 - 1000 }
+
 test('needs you counts the other sessions that need the person beside this one', () => {
-  expect(needsYouMark('a plan to approve', [])).toBe('▲ needs you: a plan to approve')
-  expect(needsYouMark('a plan to approve', [asking('b', 'Fix login', 'a question for you', T0)])).toBe(
+  expect(needsYouMark(PLAN, [])).toBe('▲ needs you: a plan to approve')
+  expect(needsYouMark(PLAN, [asking('b', 'Fix login', 'a question for you', T0)])).toBe(
     '▲ needs you: a plan to approve · +1 in another session',
   )
   expect(
-    needsYouMark('a plan to approve', [
+    needsYouMark(PLAN, [
       asking('b', 'Fix login', 'a question for you', T0),
       asking('c', 'Docs', 'permission for Bash', T0),
       live('d', T0),
@@ -140,6 +145,16 @@ test('when only other sessions need the person, the one waiting longest is named
   expect(needsYouMark(undefined, [asking('b', '', 'a plan to approve', T0)])).toBe(
     '▲ needs you in another session: a plan to approve',
   )
+})
+
+test('another session waiting longer than this one is named first, and this one counted with the rest', () => {
+  const late = { text: 'permission for Write', at: T0 + 9000 }
+  expect(needsYouMark(late, [asking('b', 'Fix login', 'a question for you', T0)])).toBe(
+    '▲ needs you in "Fix login": a question for you · +1 in another session',
+  )
+  expect(
+    needsYouMark(late, [asking('b', 'Fix login', 'a question for you', T0), asking('c', 'Docs', 'permission for Bash', T0 + 10_000)]),
+  ).toBe('▲ needs you in "Fix login": a question for you · +2 in other sessions')
 })
 
 test('only the sessions of the same project are read', async () => {
@@ -224,6 +239,19 @@ test('the mod keeps its record while the session runs and takes it away when it 
   expect(kept[key]).toBeUndefined()
 })
 
+test('a session whose turn ended asking nothing is idle in its record', NO_PAGE, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept: Record<string, unknown> = {}
+  world(on, kept)
+  const key = `live:${ROOT}:session-1`
+
+  await $.session.start(START)
+  await $.turn.start({ text: 'Fix the login form', turnId: 'turn-1' })
+  await $.turn.complete({ answer: 'Fixed.', durationMs: 4000, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  await clock.advance(2000)
+  expect(kept[key]).toMatchObject({ state: 'idle', wait: null })
+})
+
 test('the record carries the phase, kind and next step the flow set', NO_PAGE, async ($, on) => {
   const clock = mock.clock(on)
   const kept: Record<string, unknown> = {}
@@ -240,6 +268,25 @@ test('the record carries the phase, kind and next step the flow set', NO_PAGE, a
   expect(kept[key]).toMatchObject({ phase: 'implementing', kind: 'AFK', nextStep: '/code-review' })
 })
 
+test('off the flow the record carries the kind live signals give, with no phase or next step', NO_PAGE, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept: Record<string, unknown> = {}
+  world(on, kept)
+  const key = `live:${ROOT}:session-1`
+
+  await $.session.start(START)
+  await $.turn.start({ text: 'Fix the build', turnId: 'turn-1' })
+  await clock.advance(2000)
+  expect(kept[key]).toMatchObject({ phase: '', kind: '', nextStep: '' })
+
+  await clock.advance(2 * 60_000)
+  expect(kept[key]).toMatchObject({ phase: '', kind: 'AFK', nextStep: '' })
+
+  await $.turn.complete({ answer: 'done', durationMs: 4000, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  await clock.advance(2000)
+  expect(kept[key]).toMatchObject({ kind: '' })
+})
+
 test('another session that needs the person is named on the status line within five seconds, and goes when it is answered', NO_PAGE, async ($, on) => {
   const clock = mock.clock(on)
   const kept: Record<string, unknown> = {}
@@ -252,14 +299,33 @@ test('another session that needs the person is named on the status line within f
   await clock.advance(5000)
   expect(status()).toBe('▲ needs you in "Write the docs": a plan to approve')
 
-  // This session needs the person too: the other one is counted.
+  // This session needs the person too, since later: it is counted.
   await $.classic.PermissionRequest({ tool_name: 'Write', tool_input: {} })
-  expect(status()).toBe('▲ needs you: permission for Write · +1 in another session')
+  expect(status()).toBe('▲ needs you in "Write the docs": a plan to approve · +1 in another session')
   await $.classic.PermissionDenied({ tool_name: 'Write', tool_input: {}, tool_use_id: 'w1', reason: 'no' })
 
   kept[other] = live('session-2', clock.now(), { title: 'Write the docs' })
   await clock.advance(5000)
   expect(status()).toBeUndefined()
+})
+
+test('needs you names whichever session has needed the person longest, this one or another', NO_PAGE, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept: Record<string, unknown> = {}
+  const { status } = world(on, kept)
+  await $.session.start(START)
+  await clock.advance(60_000)
+
+  // Another session asked a minute before this one.
+  kept[`live:${ROOT}:session-2`] = asking('session-2', 'Write the docs', 'a plan to approve', clock.now() - 60_000)
+  await $.classic.PermissionRequest({ tool_name: 'Write', tool_input: {} })
+  await clock.advance(5000)
+  expect(status()).toBe('▲ needs you in "Write the docs": a plan to approve · +1 in another session')
+
+  // Another asked after this one: this one leads.
+  kept[`live:${ROOT}:session-2`] = asking('session-2', 'Write the docs', 'a plan to approve', clock.now())
+  await clock.advance(5000)
+  expect(status()).toBe('▲ needs you: permission for Write · +1 in another session')
 })
 
 test('a session that fell silent stops counting after two minutes', NO_PAGE, async ($, on) => {

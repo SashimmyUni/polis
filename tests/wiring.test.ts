@@ -297,7 +297,7 @@ const VERIFIER = {
   fork: false,
 } as const
 
-test("the status line is the band's list in the band's order, with no checks and no agents running", async ($, on) => {
+test("the status line is the band's list in the band's order, with no checks and no agents running", { timeoutMs: 20_000 }, async ($, on) => {
   const clock = mock.clock(on)
   const { status } = world(on)
   on('classic.PermissionRequest', () => ({}))

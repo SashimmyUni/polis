@@ -3,7 +3,8 @@
 // them) and the next step the flow calls for. Then the attention element: the
 // strip's first element, what the person should know before anything else.
 import { needsYouMark } from './live'
-import { about, isBlocking, isLive, taskStats, topWait, waitText } from './logic'
+import type { Need } from './live'
+import { about, isLive, taskStats, topNeed, waitText } from './logic'
 import { stallOf } from './stall'
 import type { AgentRun, Flow, FlowKind, LiveSession, Progress, Stall, Task, Turn, Wait } from '../types'
 
@@ -34,14 +35,15 @@ export const flowOf = (name: string): Flow | undefined => {
   return { phase, kind, next, first: first ?? next }
 }
 
-// Off the flow, a turn this long with nothing asked is work the person can leave.
+// Off the flow, a turn this long that has put nothing to the person is work
+// the person can leave.
 export const AFK_AFTER_MS = 2 * 60_000
 
 // What the attention element is made from.
 export type AttentionInput = {
   now: number
   waits: readonly Wait[]
-  turn: Pick<Turn, 'isWorking' | 'startedAt'>
+  turn: Pick<Turn, 'isWorking' | 'startedAt' | 'hasNeededYou'>
   agents: readonly AgentRun[]
   tasks: readonly Task[]
   flow: Flow | null
@@ -52,19 +54,20 @@ export type AttentionInput = {
 }
 
 // The kind of the work running now: the phase's while Claude works, else AFK
-// while an agent runs or the turn has gone two minutes; nothing while idle.
+// while an agent runs or the turn has gone two minutes without needing the
+// person; nothing while idle.
 export const workKind = (m: AttentionInput): FlowKind | undefined => {
   if (!m.turn.isWorking) return undefined
   if (m.flow !== null) return m.flow.kind
-  const isLong = m.now - m.turn.startedAt >= AFK_AFTER_MS
+  const isLong = !m.turn.hasNeededYou && m.now - m.turn.startedAt >= AFK_AFTER_MS
 
   return m.agents.some(isLive) || isLong ? 'AFK' : undefined
 }
 
-const ownNeed = (waits: readonly Wait[]): string | undefined => {
-  const top = topWait(waits)
+const ownNeed = (waits: readonly Wait[]): Need | undefined => {
+  const need = topNeed(waits)
 
-  return top !== undefined && isBlocking(top) ? waitText(top) : undefined
+  return need === undefined ? undefined : { text: waitText(need), at: need.at }
 }
 
 // Why this session's work is stalled: only AFK work while the turn runs and

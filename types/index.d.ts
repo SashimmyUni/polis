@@ -182,6 +182,8 @@ export type Turn = {
   steps: number
   agents: number
   hasWarned: boolean
+  /** Whether anything this turn has needed the person, answered since or not. */
+  hasNeededYou: boolean
 }
 
 export type RateLimit = { kind: string; percentUsed: number; resetsAt?: string }
@@ -242,12 +244,12 @@ export type LiveSession = {
   /** The project's root: the main working tree, for a worktree too. */
   root: string
   title: string
-  state: 'needs you' | 'working' | 'your turn' | 'idle'
+  state: 'needs you' | 'working' | 'idle'
   /** What it waits on the person for first, and since when. */
   wait: { text: string; at: number } | null
   /** As the flow last set them; empty off the flow. */
   phase: string
-  kind: string
+  kind: FlowKind | ''
   nextStep: string
   /** The task in progress, by its subject. */
   task: string
@@ -261,7 +263,10 @@ export type LiveSession = {
   costUsd: number
   /** Why work has stalled; empty when it has not. */
   stall: string
+  /** When the record was last written, heartbeats included. */
   updatedAt: number
+  /** When what the record says last changed: a heartbeat leaves it. */
+  movedAt: number
 }
 
 export type TurnRecord = {

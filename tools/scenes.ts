@@ -59,6 +59,7 @@ export const base: CityInput = {
     steps: 0,
     agents: 0,
     hasWarned: false,
+    hasNeededYou: false,
   },
   usage: {
     contextTokens: 24_000,

@@ -1,6 +1,7 @@
 // Notifications: what this session raises when its AFK work needs a look the
-// person is not there to give. Waits (permissions, questions, a turn waiting)
-// are Claude Code's own to notify; Polis never raises them.
+// person is not there to give. Needs you (a permission, a question, a turn
+// that ended asking something) is Claude Code's own to notify; Polis never
+// raises it.
 import type { EngineInterface } from 'claude-code'
 import { clip, compact, projectName } from './logic'
 

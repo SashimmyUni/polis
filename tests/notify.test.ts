@@ -115,6 +115,31 @@ test('a stall cleared by progress and begun again is a new stall, notified again
   expect(here.notified).toEqual([STALLED, STALLED])
 })
 
+test('a stall that changes its reason without clearing is the same stall, not notified again', SLOW, async ($, on) => {
+  const here = world(on)
+  let hold: Promise<void> | undefined
+  on('tool.call', { tool: 'Bash' }, async (_, e) => {
+    await hold
+
+    return (e.command === 'npm test' ? { result: 'Exit code 1\nFAIL', isError: true } : { result: { stdout: '', stderr: '', interrupted: false } }) as never
+  })
+  await implementing($)
+  for (const id of ['1', '2', '3']) {
+    await $.tool.call({ tool: 'Bash', tool_use_id: `b${id}`, command: 'npm test' })
+    await $.tool.call({ tool: 'Read', tool_use_id: `r${id}`, file_path: '/work/atlas/a.ts' } as never)
+  }
+  expect(here.notified).toEqual([{ title: 'Polis', text: '"Implement #54" stalled: tests failed 3×' }])
+
+  // A call left running fifteen minutes: the stall goes on, for another reason.
+  let release = () => {}
+  hold = new Promise(resolve => (release = resolve))
+  const running = $.tool.call({ tool: 'Bash', tool_use_id: 'b4', command: 'npm run e2e' })
+  await here.clock.advance(16 * MINUTE)
+  release()
+  await running
+  expect(here.notified).toHaveLength(1)
+})
+
 test('a notification not sent is shown as a toast instead', SLOW, async ($, on) => {
   const here = world(on)
   here.answer = { value: { isSent: false, reason: 'no-surface' } }
