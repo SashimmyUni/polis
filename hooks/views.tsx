@@ -34,7 +34,7 @@ import type { CheckState } from './checks'
 import { cityAlt, layoutFor, quartersOf, renderCity } from './city'
 import { attentionOf, nextStepOf } from './flow'
 import { areasOfFiles, gitLine } from './codemap'
-import { hitlWaiting } from './frontier'
+import { hitlCount } from './frontier'
 import { avatarAlt, avatarSvg } from './icons'
 import {
   SIZE_LABEL,
@@ -762,9 +762,9 @@ const frontierBlock = (el: El, m: Model): RenderElement[] => {
   const tracker = m.tracker ?? null
   const maps = (tracker?.maps ?? []).filter(map => map.open.length + map.claimed.length > 0)
   if (tracker === null || maps.length === 0) return []
-  const waiting = hitlWaiting(maps)
+  const hitl = hitlCount(maps)
   const note = [
-    waiting === 0 ? 'no HITL waiting' : `${waiting} HITL waiting`,
+    hitl === 0 ? 'no HITL' : `${hitl} HITL`,
     ...(tracker.isFailed ? [`as of ${about(m.now - tracker.at)}`] : []),
   ].join(' · ')
 

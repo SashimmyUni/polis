@@ -118,8 +118,8 @@ export const frontierOf = (map: { number: number; title: string }, tickets: read
   }
 }
 
-/** The HITL tickets waiting for the person across the maps. */
-export const hitlWaiting = (maps: readonly FrontierMap[]): number =>
+/** How many open, unblocked, unclaimed HITL tickets the maps hold. */
+export const hitlCount = (maps: readonly FrontierMap[]): number =>
   maps.reduce((sum, map) => sum + map.open.filter(one => one.mark === 'HITL').length, 0)
 
 /** Whether a read is due: never read, or the last try five minutes back. */

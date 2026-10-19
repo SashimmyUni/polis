@@ -907,11 +907,11 @@ Where the project's issues live on GitHub and are planned with `/wayfinder`, the
 - First, the map's frontier: its open sub-issues that nobody is assigned to and that wait on no open issue, in the map's order. Each is marked by its label: `HITL` (amber) for `wayfinder:grilling` and `wayfinder:prototype`, which need a session with you; `AFK` (gray) for `wayfinder:research`, which runs without you; a `wayfinder:task` ticket is left unmarked.
 - Then its claimed tickets: open sub-issues someone is assigned to, dimmer, with each assignee as `@login` (blue).
 
-The heading counts the `HITL` tickets waiting across the maps: `3 HITL waiting`, or `no HITL waiting`. A map with nothing open and unblocked and nothing claimed is left out.
+The heading counts the frontier's `HITL` tickets across the maps: `3 HITL`, or `no HITL`. A map with nothing open and unblocked and nothing claimed is left out.
 
 Polis reads the tracker with `gh` (`gh issue list` for the maps, then `gh api …/sub_issues` for each), in the project's root, each call given 10 seconds. It reads at the start of a session and each time a turn comes back, at most once every 5 minutes, and keeps the read in its store under `tracker:<root>`, so that another session of the project started within those 5 minutes uses it instead of asking again. No model call or tool call of Claude's is involved.
 
-When a read fails (offline, a timeout), the last read stays, and the heading adds its age: `3 HITL waiting · as of 12m`. Without `gh` on the path, with `gh` not signed in, without a GitHub remote, or without any open map, there is no block and nothing is said. Polis only reads the tracker: it never assigns, comments on or closes an issue.
+When a read fails (offline, a timeout), the last read stays, and the heading adds its age: `3 HITL · as of 12m`. Without `gh` on the path, with `gh` not signed in, without a GitHub remote, or without any open map, there is no block and nothing is said. Polis only reads the tracker: it never assigns, comments on or closes an issue.
 
 ### Agents
 

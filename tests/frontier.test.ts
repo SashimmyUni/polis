@@ -140,7 +140,7 @@ test('the recorded maps show each open map with its open, unblocked, unclaimed t
   // Map 4 has nothing open and is left out; #19 waits on a blocker.
   expect(await frontier($)).toEqual([
     'FRONTIER',
-    '5 HITL waiting',
+    '5 HITL',
     "Cut Polis's overhead",
     'HITL',
     'Derive task area and parent without asking Claude',
@@ -178,7 +178,7 @@ test('a research ticket is marked AFK, a task unmarked, and claimed tickets foll
     '@SashimmyUni @octocat',
   ])
   // The claimed grilling ticket no longer waits on the person.
-  expect(shown[1]).toBe('5 HITL waiting')
+  expect(shown[1]).toBe('5 HITL')
 })
 
 const MAP_READS = (gh: Gh): number => gh.runs.filter(run => run.startsWith('gh issue list')).length
@@ -222,7 +222,7 @@ test('a session started within five minutes of another takes its read from the s
   await $.session.start(START)
   await clock.settle()
   expect(gh.runs).toEqual([])
-  expect(await frontier($)).toEqual(['FRONTIER', '1 HITL waiting', 'Kept map', 'HITL', 'Kept ticket'])
+  expect(await frontier($)).toEqual(['FRONTIER', '1 HITL', 'Kept map', 'HITL', 'Kept ticket'])
 })
 
 test('a failed read keeps the last one, marked with its age, until a read succeeds', NO_PAGE, async ($, on) => {
@@ -237,14 +237,14 @@ test('a failed read keeps the last one, marked with its age, until a read succee
   await $.turn.complete(turnEnd('turn-1'))
   await clock.settle()
   expect(MAP_READS(gh)).toBe(2)
-  expect((await frontier($)).slice(0, 3)).toEqual(['FRONTIER', '5 HITL waiting · as of 6m', "Cut Polis's overhead"])
+  expect((await frontier($)).slice(0, 3)).toEqual(['FRONTIER', '5 HITL · as of 6m', "Cut Polis's overhead"])
 
   gh.answer = 'recorded'
   await clock.advance(5 * 60_000)
   await $.turn.start({ text: 'Again', turnId: 'turn-2' })
   await $.turn.complete(turnEnd('turn-2'))
   await clock.settle()
-  expect((await frontier($)).slice(0, 2)).toEqual(['FRONTIER', '5 HITL waiting'])
+  expect((await frontier($)).slice(0, 2)).toEqual(['FRONTIER', '5 HITL'])
   expect(gh.toasts).toEqual([])
 })
 
