@@ -62,6 +62,7 @@ import {
   taskStats,
   taskTree,
   topFamilies,
+  topNeed,
   topWait,
   waitMark,
   waitText,
@@ -280,11 +281,7 @@ const labelled = (
 }
 
 // The wait that holds work up until the person acts, if there is one.
-const blockerOf = (m: Pick<Model, 'waits'>): Wait | undefined => {
-  const top = topWait(m.waits)
-
-  return top !== undefined && isBlocking(top) ? top : undefined
-}
+const blockerOf = (m: Pick<Model, 'waits'>): Wait | undefined => topNeed(m.waits)
 
 // The agent a wait was raised by, in a few words; nothing for the main loop.
 const askerOf = (m: Model, wait: Wait): string => {

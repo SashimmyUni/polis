@@ -3,7 +3,7 @@
 // session of the mod: a value one sets, another gets on its next read
 // (checked with two concurrent sessions).
 import type { AgentRun, Flow, LiveSession, Task, Usage, Wait } from '../types'
-import { clip, isBlocking, isLive, sessionState, taskStats, topWait, waitText } from './logic'
+import { clip, isLive, sessionState, taskStats, topNeed, waitText } from './logic'
 
 // The part of the engine's store the records need. The seam where a store of
 // files would go in its place.
@@ -128,7 +128,7 @@ export type LiveParts = {
 // This session's record as the others read it. Phase, kind and next step
 // come from the flow, empty off it.
 export const liveSessionOf = (parts: LiveParts): LiveSession => {
-  const top = topWait(parts.waits)
+  const need = topNeed(parts.waits)
   const stats = taskStats(parts.tasks)
 
   return {
@@ -136,7 +136,7 @@ export const liveSessionOf = (parts: LiveParts): LiveSession => {
     root: parts.root,
     title: parts.title,
     state: sessionState(parts.isWorking, parts.waits),
-    wait: top !== undefined && isBlocking(top) ? { text: waitText(top), at: top.at } : null,
+    wait: need === undefined ? null : { text: waitText(need), at: need.at },
     phase: parts.flow?.phase ?? '',
     kind: parts.flow?.kind ?? '',
     nextStep: parts.flow?.next ?? '',

@@ -296,6 +296,10 @@ const NOWHERE: Here = {
   tokensFrom: 0,
 }
 
+// Whether the session is known by its id and its project: what a record
+// written under them needs.
+const isKnown = (here: Here): boolean => here.id !== '' && here.root !== ''
+
 const say = ($: EngineInterface, where: string, error: unknown): void => {
   $.ui.log(`polis: ${where}: ${String(error)}`)
 }
@@ -402,8 +406,9 @@ const watchStall = async ($: EngineInterface): Promise<void> => {
   await raise($, stallText(nameHere(), stall.why))
 }
 
-// Work moved: a step, a tool call or an agent event.
-const move = async ($: EngineInterface, change = progressed): Promise<void> => {
+// Work moved (a step, a tool call or an agent event): the progress is
+// recorded, and a stall it begins or ends is shown and may be notified.
+const recordProgress = async ($: EngineInterface, change = progressed): Promise<void> => {
   const now = await $.clock.now()
   await update($, progress, value => change(value, now))
   await watchStall($)
@@ -527,7 +532,7 @@ const readFrontier = async ($: EngineInterface, root: string): Promise<void> => 
 // The project's archive brought in line with the board. The stored archive
 // is read again just before, so that a parallel session's work is not lost.
 const saveArchive = async ($: EngineInterface, here: Here, board: readonly Task[]): Promise<void> => {
-  if (here.root === '' || here.id === '') return
+  if (!isKnown(here)) return
   const key = `archive:${here.root}`
   const stored = asArchive(await $.store.get(key))
   const next = syncArchive(stored, board, here.id)
@@ -548,7 +553,7 @@ const saveTasks = async ($: EngineInterface, here: Here): Promise<void> => {
 // This session's record, written into the project's log. The stored log is
 // read again just before, so that a parallel session's record is not lost.
 const saveSession = async ($: EngineInterface, here: Here, isOver: boolean): Promise<void> => {
-  if (here.id === '' || here.root === '') return
+  if (!isKnown(here)) return
   const now = await $.clock.now()
   // A finished session never shows a live agent.
   const runs = isOver
@@ -732,7 +737,7 @@ const load = async (
 let keeper: LiveKeeper | undefined
 
 const keepLive = async ($: EngineInterface, here: Here): Promise<void> => {
-  if (keeper === undefined || here.id === '' || here.root === '') return
+  if (keeper === undefined || !isKnown(here)) return
   const now = await $.clock.now()
   await keeper.write(await liveOf($, here, now), now)
 }
@@ -758,15 +763,15 @@ const liveOf = async ($: EngineInterface, here: Here, now: number): Promise<Live
   })
 }
 
-// What the others' records say without their times: a heartbeat alone is no
-// reason to draw again.
-const saidBy = (list: readonly LiveSession[]): string =>
+// The others' records less their times: a heartbeat alone is no reason to
+// draw again.
+const withoutTimes = (list: readonly LiveSession[]): string =>
   JSON.stringify(list.map(one => ({ ...one, updatedAt: 0 })))
 
 const readLive = async ($: EngineInterface, here: Here): Promise<void> => {
   if (keeper === undefined || here.root === '') return
   const found = await keeper.others(here.root, here.id, await $.clock.now())
-  if (saidBy(found) === saidBy(await read($, others))) return
+  if (withoutTimes(found) === withoutTimes(await read($, others))) return
   await update($, others, () => found)
   await refresh($, false)
 }
@@ -1025,7 +1030,7 @@ export const register: Register = (on, options) => {
   on('session.end', async ($, e, next) => {
     try {
       // The others stop counting this session at once.
-      if (keeper !== undefined && here.id !== '' && here.root !== '') await keeper.end(here.root, here.id)
+      if (keeper !== undefined && isKnown(here)) await keeper.end(here.root, here.id)
     } catch (error) {
       say($, 'ending the live record', error)
     }
@@ -1293,7 +1298,7 @@ export const register: Register = (on, options) => {
   on('turn.step', async function* ($, e, next) {
     const result = yield* next(e)
     try {
-      await move($)
+      await recordProgress($)
       const cost = result.usage
       if (cost !== null) {
         const work = cost.input_tokens + cost.cache_creation_input_tokens + cost.output_tokens
@@ -1396,7 +1401,7 @@ export const register: Register = (on, options) => {
         }
         await update($, waits, list => list.filter(wait => wait.agentId !== agentId))
         if (status === 'done') await settleVerdict($, agentId, e.answer)
-        await move($, (value, now) => agentEnded(value, agentId, now))
+        await recordProgress($, (value, now) => agentEnded(value, agentId, now))
       }
       await refresh($, shouldAutoOpen)
     } catch (error) {
@@ -1452,7 +1457,7 @@ export const register: Register = (on, options) => {
         value.isWorking ? { ...value, agents: value.agents + 1 } : value,
       )
       await note($, 'agent', `Agent started: ${label}`)
-      await move($)
+      await recordProgress($)
       await refresh($, shouldAutoOpen)
     } catch (error) {
       say($, 'agent.spawn', error)
@@ -1496,7 +1501,7 @@ export const register: Register = (on, options) => {
       const { agentId } = e
       began = await $.clock.now()
       const start = { id: e.tool_use_id, tool, agentId: agentId ?? '', call: callOf({ ...e, tool }) }
-      await move($, (value, now) => callBegan(value, start, now))
+      await recordProgress($, (value, now) => callBegan(value, start, now))
       if (SHELLS.has(tool)) kinds = checksOf(pick(e, 'command') ?? '')
       // A question or a plan waits on the person for as long as its call is in flight.
       const asking = Object.hasOwn(ASKING, tool) ? ASKING[tool] : undefined
@@ -1547,7 +1552,7 @@ export const register: Register = (on, options) => {
     try {
       const { agentId } = e
       await endWaits($, tool, agentId)
-      await move($, (value, now) => callEnded(value, e.tool_use_id, now))
+      await recordProgress($, (value, now) => callEnded(value, e.tool_use_id, now))
       const at = await $.clock.now()
       // A check is told by its command, its result by how the call ended.
       const hasPassed = kinds.length === 0 ? undefined : outcomeOf(ran, e)
@@ -1555,7 +1560,7 @@ export const register: Register = (on, options) => {
         const before = await read($, checks)
         const command = clip(pick(e, 'command') ?? '', 200)
         await update($, checks, list => recordChecks(list, kinds, { hasPassed, at, ms: at - began, command }))
-        await move($, (value, now) => checkRan(value, kinds, hasPassed, now))
+        await recordProgress($, (value, now) => checkRan(value, kinds, hasPassed, now))
         // One toast as a check starts failing, none for each run while it stays so.
         const broken = kinds.filter(
           kind => !hasPassed && before.find(check => check.kind === kind)?.hasPassed !== false,

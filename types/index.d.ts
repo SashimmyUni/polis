@@ -247,7 +247,7 @@ export type LiveSession = {
   wait: { text: string; at: number } | null
   /** As the flow last set them; empty off the flow. */
   phase: string
-  kind: string
+  kind: FlowKind | ''
   nextStep: string
   /** The task in progress, by its subject. */
   task: string
