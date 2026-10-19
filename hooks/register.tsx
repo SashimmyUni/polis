@@ -14,6 +14,7 @@ import type {
   Usage,
   ViewName,
 } from '../types'
+import { WRAP_UP, askOf } from './ask'
 import { CHECK_LABEL, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
 import { GIT_DIFF, GIT_STATUS, areaOfPath, noteTouch, parseGit, taskOfEdit } from './codemap'
 import { CHANGE_MS, liveKeeper, liveSessionOf } from './live'
@@ -38,6 +39,7 @@ import {
   forecastsOf,
   heuristicSize,
   hitFile,
+  isBlocking,
   isLive,
   limitName,
   limitToast,
@@ -75,6 +77,7 @@ import { REPORT_FILE, reportOf } from './report'
 import { PAGE_FILES, PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
+import { GH_TIMEOUT, asTracker, isDue, readTracker } from './frontier'
 import { band, pane, stripElements, summary } from './views'
 import type { Actions, Model, StripModel } from './views'
 
@@ -144,6 +147,7 @@ const log = atom({ plugin: 'polis', key: 'log' } as const, null)
 const archive = atom({ plugin: 'polis', key: 'archive' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
 const others = atom({ plugin: 'polis', key: 'others' } as const, [])
+const tracker = atom({ plugin: 'polis', key: 'tracker' } as const, null)
 
 const GUIDANCE = {
   id: 'polis:guidance',
@@ -439,6 +443,32 @@ const readGit = async ($: EngineInterface, root: string): Promise<void> => {
   }
 }
 
+// The wayfinder frontier, asked of `gh` at most every five minutes, the time
+// kept with it so that parallel sessions of the project share the wait.
+let isReadingTracker = false
+
+const readFrontier = async ($: EngineInterface, root: string): Promise<void> => {
+  if (root === '' || isReadingTracker) return
+  isReadingTracker = true
+  try {
+    const key = `tracker:${root}`
+    const now = await $.clock.now()
+    const held = await read($, tracker)
+    const last = asTracker(await $.store.get(key)) ?? held
+    if (!isDue(last, now)) {
+      if (held === null && last !== null) await update($, tracker, () => last)
+      return
+    }
+    const next = await readTracker(argv => $.process.run(argv, { cwd: root, timeoutMs: GH_TIMEOUT }), last, now)
+    await update($, tracker, () => next)
+    await $.store.set(key, next)
+  } catch {
+    // The store refused it: the frontier stays as it was.
+  } finally {
+    isReadingTracker = false
+  }
+}
+
 // The project's archive brought in line with the board. The stored archive
 // is read again just before, so that a parallel session's work is not lost.
 const saveArchive = async ($: EngineInterface, here: Here, board: readonly Task[]): Promise<void> => {
@@ -629,6 +659,7 @@ const load = async (
     activity: await read($, activity),
     files: await read($, files),
     others: await read($, others),
+    tracker: await read($, tracker),
   }
 }
 
@@ -736,6 +767,8 @@ export const register: Register = (on, options) => {
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
   let here: Here = NOWHERE
+  // What the main loop's wrap-up call asked the person this turn, if anything.
+  let wrapUpAsk: string | undefined
   // The project the page on disk is written under, once a session has started.
   let pageRoot: string | null = null
   const session = (): Pick<Model, 'sessionId' | 'root' | 'isStill'> => ({
@@ -847,6 +880,7 @@ export const register: Register = (on, options) => {
       await saveArchive($, here, await read($, tasks))
       await saveSession($, here, false)
       void readGit($, root)
+      void readFrontier($, root)
       await refresh($, false)
     } catch (error) {
       say($, 'loading the project', error)
@@ -1126,7 +1160,13 @@ export const register: Register = (on, options) => {
         expected: expectedFor(size, 'heuristic', past),
       }))
       // The prompt is the person's answer to whatever the main loop waited on.
+      const answered = (await read($, waits)).some(
+        wait => wait.agentId === undefined && isBlocking(wait),
+      )
       await update($, waits, list => list.filter(wait => wait.agentId !== undefined))
+      wrapUpAsk = undefined
+      // A needs you the prompt answered leaves the strip at once.
+      if (answered) await refresh($, false)
       here = await whereabouts($, here, now)
       if (here.title === '') here = { ...here, title: clip(e.text, 80) }
 
@@ -1212,11 +1252,21 @@ export const register: Register = (on, options) => {
       const { agentId } = e
       if (agentId === undefined) {
         const ended = await update($, turn, value => ({ ...value, isWorking: false, endedAt: now }))
-        // The turn is handed back: nothing of the main loop's waits on a tool any more.
+        // The turn is handed back: nothing of the main loop's waits on a tool
+        // any more, and a turn that ended asking the person something needs them.
+        const ask = e.reason === 'answer' ? askOf(e.answer, wrapUpAsk) : undefined
+        wrapUpAsk = undefined
         await update($, waits, list =>
           addWait(
             list.filter(wait => wait.agentId !== undefined),
-            { kind: 'turn', at: now },
+            ask === undefined
+              ? { kind: 'turn', at: now }
+              : {
+                  kind: 'asked',
+                  at: now,
+                  count: ask.count,
+                  ...(ask.detail === undefined ? {} : { detail: clip(ask.detail, 80) }),
+                },
           ),
         )
         here = { ...here, turns: here.turns + 1 }
@@ -1269,10 +1319,19 @@ export const register: Register = (on, options) => {
         await saveTasks($, here)
         await saveSession($, here, false)
         void readGit($, here.root)
+        void readFrontier($, here.root)
       } catch (error) {
         say($, 'saving the session', error)
       }
     }
+
+    return next(e)
+  })
+
+  // The desktop app's wrap-up call in the main loop: its ask is put to the
+  // person when the turn ends.
+  on('tool.call', { tool: WRAP_UP }, async ($, e, next) => {
+    if (e.agentId === undefined) wrapUpAsk = pick(e, 'ask')
 
     return next(e)
   })

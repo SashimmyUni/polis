@@ -57,7 +57,7 @@ On the desktop app and in a terminal, Polis draws one band directly above the pr
 
 | Element | Meaning |
 | --- | --- |
-| `▲ needs you: permission for Bash` | First on the row, bold rose, and never left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan, here or in another running session of the project (see "What needs you"). |
+| `▲ needs you: permission for Bash` | First on the row, bold rose, and never left out when the band is narrow. Shown only while Claude waits on you for a permission, a question or a plan, or its answer ended by asking you something, here or in another running session of the project (see "What needs you"). |
 | `⚠ 5h limit out in 1h20m` | Rose. Shown only while a usage limit is on course to run out before it resets, or as `⚠ 5h limit reached` once full (see "Usage limits"). Absent while every limit is fine. |
 | `ctx 122k` | The context the session holds, in tokens: grey inside the smart zone, amber from the smart-zone caution, and rose past the smart-zone limit, where it reads `ctx 151k · out of the smart zone`. Hidden while it reads 0. |
 | `2/5 tasks` | Tasks done out of all tasks on the board, sub-tasks included. Hidden while the board is empty. |
@@ -95,7 +95,7 @@ The pane shows `◆ POLIS`, the project's name and phase, and one tab per view. 
 | 1 | Overview | What needs you, the project and this session, milestones and progress, this prompt against its expected range, tasks, checks, git, working agents, background processes, recent activity and the most-edited files. Buttons: **Orchestrate** (o), **Clear finished** (c), and **Stop turn** (s) while a prompt is running. |
 | 2 | Project | Every session of this project, newest first, with the agents each ran and their sub-agents. |
 | 3 | City | The top strip (the band's elements: what needs you, the limit warning, the smart zone and tasks done), then the map (a row of blocks per district in a terminal). Button: **Full city** (f), which adds everything the project has finished, and then reads **Current city** to switch back (see "The full city"). |
-| 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task. |
+| 4 | Tasks | The task tree with sub-tasks, areas, owners, blockers and what checked each finished task, then the wayfinder maps' frontier where there is one. |
 | 5 | Agents | The main session and each agent, with an icon (a glyph in a terminal) carrying its most-used tools, its status, time, tokens and task; then the agents of the earlier sessions. |
 | 6 | Resources | Tokens, time and tool calls against expected; the context window; rate limits with a forecast for each, and cost; tokens by agent; what prompts usually cost in this project. |
 | 7 | Skills | Skills used this session, skills suggested for the work, and skills available. |
@@ -589,16 +589,19 @@ This chapter covers what Polis tells you beyond the shape of the work: what is w
 
 ### What needs you
 
-Claude sometimes stops and waits for you. Polis marks four kinds of wait:
+Claude sometimes stops and waits for you. Polis marks five kinds of wait:
 
 | Wait | Wording | When |
 | --- | --- | --- |
 | Permission | `permission for Bash` | A tool call is held for your leave. The tool's name is cut to 28 characters. |
 | Question | `a question for you` | Claude asked you something with AskUserQuestion. The question itself is shown beneath it in the Overview. |
 | Plan | `a plan to approve` | Claude asked you to approve a plan (ExitPlanMode). |
-| Your turn | `your turn` | Claude finished answering and handed the turn back. |
+| Asked | `a question for you` or `3 questions for you` | Claude's answer ended by asking you something (see below). |
+| Your turn | `your turn` | Claude finished answering, asking nothing, and handed the turn back. |
 
-The first three hold work up and are called **needs you**; they are shown in rose, with a `▲`. `your turn` is quieter (`◇`, amber in the city) and is not shown in the band or the status line. A wait ends when the call that raised it ends (allowed, denied or failed), when you send your next prompt (which answers whatever the main session waited on), or when the agent that raised it finishes. The same loop asking again for the same tool replaces its earlier request. When several things wait, the oldest one is shown first.
+A turn of the main session counts as asking you something when the first of these holds: the desktop app's wrap-up box asks you a question (`a question for you`, with the question beneath it in the Overview); the answer holds a round of two or more numbered questions, marked `❓` or `**Q1**` (`3 questions for you`); or the answer's last paragraph, past any closing markup, ends with `?` (`a question for you`). Polis reads this from the answer itself, with no call to a model. A subagent's answer, a turn you stopped and a refused turn never count.
+
+All but `your turn` hold work up and are called **needs you**; they are shown in rose, with a `▲`. `your turn` is quieter (`◇`, amber in the city) and is not shown in the band or the status line. A wait ends when the call that raised it ends (allowed, denied or failed), when you send your next prompt (which answers whatever the main session waited on), or when the agent that raised it finishes. The same loop asking again for the same tool replaces its earlier request. When several things wait, the oldest one is shown first.
 
 Where it shows:
 
@@ -856,6 +859,19 @@ After the title, small tags:
 - **How it was checked** (faint, rose when it failed): for a finished task, `verified by a verifier`, `verified by tests`, `not checked yet`, `failed its verifier` or `failed its tests`. Left out in a narrow pane, where the mark says it.
 
 At most 60 rows are drawn; the rest collapse to `+12 more`. In a narrow pane the tags move under the title.
+
+#### Frontier
+
+Where the project's issues live on GitHub and are planned with `/wayfinder`, the Tasks view ends with a **FRONTIER** block: one entry per open issue labelled `wayfinder:map`, under the map's title (less its `Map:` prefix).
+
+- First, the map's frontier: its open sub-issues that nobody is assigned to and that wait on no open issue, in the map's order. Each is marked by its label: `HITL` (amber) for `wayfinder:grilling` and `wayfinder:prototype`, which need a session with you; `AFK` (gray) for `wayfinder:research`, which runs without you; a `wayfinder:task` ticket is left unmarked.
+- Then its claimed tickets: open sub-issues someone is assigned to, dimmer, with each assignee as `@login` (blue).
+
+The heading counts the `HITL` tickets waiting across the maps: `3 HITL waiting`, or `no HITL waiting`. A map with nothing open and unblocked and nothing claimed is left out.
+
+Polis reads the tracker with `gh` (`gh issue list` for the maps, then `gh api …/sub_issues` for each), in the project's root, each call given 10 seconds. It reads at the start of a session and each time a turn comes back, at most once every 5 minutes, and keeps the read in its store under `tracker:<root>`, so that another session of the project started within those 5 minutes uses it instead of asking again. No model call or tool call of Claude's is involved.
+
+When a read fails (offline, a timeout), the last read stays, and the heading adds its age: `3 HITL waiting · as of 12m`. Without `gh` on the path, with `gh` not signed in, without a GitHub remote, or without any open map, there is no block and nothing is said. Polis only reads the tracker: it never assigns, comments on or closes an issue.
 
 ### Agents
 
