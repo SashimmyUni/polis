@@ -251,7 +251,7 @@ A `/city` answer looks like this. A line is left out when it has nothing to say:
 
 ```
 Polis · atlas · implementing
-▲ Needs you: permission for Bash · waiting 2m05s
+▲ needs you: permission for Bash
 Progress: 50% (1/3 milestones)
 Tasks: 3 done · 1 active · 2 waiting (2 verified · 1 not checked)
   ▶ Writing the integration tests
@@ -269,7 +269,7 @@ Project: 12 sessions · 31 agents · 9 sub-agents · 4.2M tokens · $18.40
 | Line | What it says |
 | --- | --- |
 | `Polis · atlas · implementing` | The project's name and, once a flow skill set one, the phase (see "Phase and next step"). |
-| `▲ Needs you:` | What holds Claude up until you act, and how long it has waited. Only while something does. |
+| `▲ needs you: permission for Bash` | The strip's first element, worded as on the band: what needs you, in this session or another (`▲ needs you in "Fix the login form": …`), else stalled, HITL or AFK work (`⚠ stalled 6m: no progress`, `◆ HITL: grilling`, `◇ AFK: implementing · 2 agents · 4/7`). Left out while there is none. |
 | `Progress:` | Milestones when the project has them, else the board's top-level tasks. |
 | `Tasks:` | Done, active and waiting, with a count in brackets of the finished tasks that were checked (see "Verified and done"). Up to five tasks in progress follow. |
 | `Agents:` | Working now, and all this session. Up to five working agents follow. |
@@ -634,7 +634,7 @@ Where it shows:
 | Status line | The same text, leading the line. In a chat panel with no band it stands in for the band. |
 | Overview | A `▲ NEEDS YOU` block above everything else, up to three waits, each as `permission for Bash · asked by writer · waiting 2m05s` (the `asked by` part only when an agent raised it), with the question's text beneath it. |
 | City | The flag on City Hall turns rose, a speech bubble with `!` rises over the main session's figure, and the first callout reads `session needs you` (or `your turn`, amber). |
-| Text city and `/city` answer | `◆ city hall needs you`, then `▲ needs you: permission for Bash · waiting 2m05s`; the `/city` answer puts it on its second line. |
+| Text city and `/city` answer | `◆ city hall needs you`, then `▲ needs you: permission for Bash · waiting 2m05s` in the text city; the `/city` answer puts the band's `▲ needs you: permission for Bash` on its second line. |
 
 **Other live sessions.** Every running session of the project (worktrees count as the same project) tells the others what it is doing, so the band and the status line also say when another session needs you:
 

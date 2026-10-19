@@ -1247,7 +1247,8 @@ export const summary = (m: Model): string => {
   const active = m.tasks.filter(task => task.status === 'in_progress')
   const { expected } = m.turn
   const phase = m.flow === null ? '' : ` · ${m.flow.phase}`
-  const blocker = blockerOf(m)
+  // The strip's first element, as the band shows it.
+  const attention = attentionOf(m)
   const checked = standingText(m.tasks)
   const ran = checksLine(m.checks)
   const forecasts = forecastsFor(m)
@@ -1268,7 +1269,7 @@ export const summary = (m: Model): string => {
 
   return [
     `Polis · ${m.project?.name ?? 'this project'}${phase}`,
-    ...(blocker === undefined ? [] : [`▲ Needs you: ${waitLine(m, blocker)}`]),
+    ...(attention === undefined ? [] : [attention.text]),
     `Progress: ${progress.percent}% (${progress.done}/${progress.total} ${progress.unit})`,
     `Tasks: ${stats.done} done · ${stats.active} active · ${stats.waiting} waiting` +
       (checked === '' ? '' : ` (${checked})`),

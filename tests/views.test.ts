@@ -189,7 +189,7 @@ test('before any check has run there is no Checks section, and the city says non
   expect(shown(await viewed($, 'terminal', 'overview'))).not.toContain('CHECKS')
   expect(shown(await viewed($, 'terminal', 'city'))).toContain('▣ checks: none run yet')
   const text = await answer($, here)
-  for (const label of ['Needs you', 'Checks:', 'Git:', 'Limits:', 'Project:']) {
+  for (const label of ['▲', 'Checks:', 'Git:', 'Limits:', 'Project:']) {
     expect(text).not.toContain(label)
   }
 })
@@ -217,7 +217,49 @@ test('a permission request leads the band in rose and is told with how long it h
   const city = shown(await viewed($, 'terminal', 'city'))
   expect(city).toContain('needs you')
   expect(city).toContain('▲ needs you: permission for Bash · waiting 2m05s')
-  expect((await answer($, here)).split('\n')[1]).toBe('▲ Needs you: permission for Bash · waiting 2m05s')
+  expect((await answer($, here)).split('\n')[1]).toBe('▲ needs you: permission for Bash')
+})
+
+test('the /city answer leads with the strip’s first element: HITL or AFK work, or another session’s need', async ($, on) => {
+  const clock = mock.clock(on)
+  const here = world(on)
+  on('store.keys', () => ({ value: Object.keys(here.kept) }))
+  on('store.delete', (_, e) => {
+    delete here.kept[e.key]
+
+    return { value: undefined }
+  })
+  on('tool.call', { tool: 'Skill' }, () => ({ result: { success: true } }) as never)
+  await $.session.start(START)
+  await $.turn.start({ text: 'Grill me', turnId: 'turn-1' })
+  await $.tool.call({ tool: 'Skill', tool_use_id: 's1', skill: 'grilling' } as never)
+  expect((await answer($, here)).split('\n')[1]).toBe('◆ HITL: grilling')
+
+  await $.tool.call({ tool: 'Skill', tool_use_id: 's2', skill: 'implement' } as never)
+  expect((await answer($, here)).split('\n')[1]).toBe('◇ AFK: implementing')
+
+  here.kept[`live:${ROOT}:session-2`] = {
+    sessionId: 'session-2',
+    root: ROOT,
+    title: 'Write the docs',
+    state: 'needs you',
+    wait: { text: 'a plan to approve', at: clock.now() },
+    phase: '',
+    kind: '',
+    nextStep: '',
+    task: '',
+    agents: 0,
+    tasksDone: 0,
+    tasksTotal: 0,
+    contextTokens: 0,
+    zoneLimit: 150_000,
+    tokens: 0,
+    costUsd: 0,
+    stall: '',
+    updatedAt: clock.now(),
+  }
+  await clock.advance(5000)
+  expect((await answer($, here)).split('\n')[1]).toBe('▲ needs you in "Write the docs": a plan to approve')
 })
 
 test("a verifier's verdicts mark the done tasks: verified, not checked, and failed", async ($, on) => {
