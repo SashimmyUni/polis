@@ -1,0 +1,6 @@
+{
+  "name": "polis-probe",
+  "version": "0.0.1",
+  "description": "Logs what the engine hands a mod, to check an engine fact in a real host before building on it",
+  "author": { "name": "Jimmy Huynh" }
+}
