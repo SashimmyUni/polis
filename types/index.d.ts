@@ -218,7 +218,7 @@ export type Usage = {
   zoneOwed: ZoneLevel
 }
 
-export type WaitKind = 'permission' | 'question' | 'plan' | 'input' | 'turn'
+export type WaitKind = 'permission' | 'question' | 'plan' | 'input' | 'asked' | 'turn'
 
 /** Something Claude is waiting on the person for. */
 export type Wait = {
@@ -229,6 +229,8 @@ export type Wait = {
   /** The subagent loop that asked; absent for the main loop. */
   agentId?: string
   detail?: string
+  /** How many questions a turn that ended asking put to the person. */
+  count?: number
 }
 
 export type TurnRecord = {
