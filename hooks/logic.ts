@@ -23,6 +23,7 @@ import type {
   WaitKind,
   ZoneLevel,
 } from '../types'
+import { askText } from './ask'
 
 // ---------------------------------------------------------------- formatting
 
@@ -925,6 +926,7 @@ export const waitText = (wait: Wait): string => {
   if (wait.kind === 'question') return 'a question for you'
   if (wait.kind === 'plan') return 'a plan to approve'
   if (wait.kind === 'input') return `input for ${clip(wait.detail ?? 'a connector', 28)}`
+  if (wait.kind === 'asked') return askText(wait.count)
 
   return wait.detail ?? 'your turn'
 }

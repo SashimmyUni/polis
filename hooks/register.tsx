@@ -13,6 +13,7 @@ import type {
   Usage,
   ViewName,
 } from '../types'
+import { WRAP_UP, askOf } from './ask'
 import { CHECK_LABEL, checksOf, noteEdit, outcomeOf, recordChecks, stateOf } from './checks'
 import { GIT_DIFF, GIT_STATUS, areaOfPath, noteTouch, parseGit, taskOfEdit } from './codemap'
 import {
@@ -35,6 +36,7 @@ import {
   forecastsOf,
   heuristicSize,
   hitFile,
+  isBlocking,
   isLive,
   limitName,
   limitToast,
@@ -723,6 +725,8 @@ export const register: Register = (on, options) => {
   // What the person has asked for lately, for the skill suggestions.
   let asked: string[] = []
   let here: Here = NOWHERE
+  // What the main loop's wrap-up call asked the person this turn, if anything.
+  let wrapUpAsk: string | undefined
   // The project the page on disk is written under, once a session has started.
   let pageRoot: string | null = null
   const session = (): Pick<Model, 'sessionId' | 'root' | 'isStill'> => ({
@@ -1085,7 +1089,13 @@ export const register: Register = (on, options) => {
         expected: expectedFor(size, 'heuristic', past),
       }))
       // The prompt is the person's answer to whatever the main loop waited on.
+      const answered = (await read($, waits)).some(
+        wait => wait.agentId === undefined && isBlocking(wait),
+      )
       await update($, waits, list => list.filter(wait => wait.agentId !== undefined))
+      wrapUpAsk = undefined
+      // A needs you the prompt answered leaves the strip at once.
+      if (answered) await refresh($, false)
       here = await whereabouts($, here, now)
       if (here.title === '') here = { ...here, title: clip(e.text, 80) }
 
@@ -1171,11 +1181,21 @@ export const register: Register = (on, options) => {
       const { agentId } = e
       if (agentId === undefined) {
         const ended = await update($, turn, value => ({ ...value, isWorking: false, endedAt: now }))
-        // The turn is handed back: nothing of the main loop's waits on a tool any more.
+        // The turn is handed back: nothing of the main loop's waits on a tool
+        // any more, and a turn that ended asking the person something needs them.
+        const ask = e.reason === 'answer' ? askOf(e.answer, wrapUpAsk) : undefined
+        wrapUpAsk = undefined
         await update($, waits, list =>
           addWait(
             list.filter(wait => wait.agentId !== undefined),
-            { kind: 'turn', at: now },
+            ask === undefined
+              ? { kind: 'turn', at: now }
+              : {
+                  kind: 'asked',
+                  at: now,
+                  count: ask.count,
+                  ...(ask.detail === undefined ? {} : { detail: clip(ask.detail, 80) }),
+                },
           ),
         )
         here = { ...here, turns: here.turns + 1 }
@@ -1233,6 +1253,14 @@ export const register: Register = (on, options) => {
         say($, 'saving the session', error)
       }
     }
+
+    return next(e)
+  })
+
+  // The desktop app's wrap-up call in the main loop: its ask is put to the
+  // person when the turn ends.
+  on('tool.call', { tool: WRAP_UP }, async ($, e, next) => {
+    if (e.agentId === undefined) wrapUpAsk = pick(e, 'ask')
 
     return next(e)
   })
