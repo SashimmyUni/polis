@@ -37,6 +37,10 @@ The gap between two phases in a session, such as grilling and implementing: the 
 The skill or move the flow calls for after the current phase, such as `/to-tickets` after a spec, or `/clear` before an `/implement`.
 _Avoid_: suggested skills, recommendations
 
+**Overhead**:
+Every token processed because Polis is installed: the text it adds, the tool calls it prompts Claude to make, and its own model calls; the difference between a session with Polis and the same session without it.
+_Avoid_: token usage, plugin cost, context (overhead is processed, not held)
+
 ### Work
 
 **Project**:
