@@ -150,6 +150,14 @@ export type LiveParts = {
   now: number
 }
 
+// Whether a session is moving, in the words the others read: a turn that
+// ended asking nothing is idle.
+const liveState = (isWorking: boolean, waits: readonly Wait[]): LiveSession['state'] => {
+  const state = sessionState(isWorking, waits)
+
+  return state === 'your turn' ? 'idle' : state
+}
+
 // This session's record as the others read it. Phase, kind and next step
 // come from the flow; off it, phase and next step are empty and the kind is
 // what live signals give.
@@ -161,7 +169,7 @@ export const liveSessionOf = (parts: LiveParts): LiveSession => {
     sessionId: parts.sessionId,
     root: parts.root,
     title: parts.title,
-    state: sessionState(parts.isWorking, parts.waits),
+    state: liveState(parts.isWorking, parts.waits),
     wait: need === undefined ? null : { text: waitText(need), at: need.at },
     phase: parts.flow?.phase ?? '',
     kind: parts.flow?.kind ?? parts.workKind ?? '',

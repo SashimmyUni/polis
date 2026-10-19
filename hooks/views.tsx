@@ -869,7 +869,6 @@ const portrait = (
 const LIVE_STATE_COLOR: Record<LiveSession['state'], string> = {
   'needs you': C.fail,
   working: C.run,
-  'your turn': C.muted,
   idle: C.muted,
 }
 
@@ -922,7 +921,7 @@ const sessionsBlock = (el: El, m: Model): RenderElement[] => {
                 {one.title === '' ? 'untitled session' : one.title}
               </Text>
               <Text color={LIVE_STATE_COLOR[one.state]} wrap={fit(m)}>
-                {isOwn ? `${liveStateText(one)} · this session` : liveStateText(one)}
+                {isOwn ? `${liveStateText(one)} · you are here` : liveStateText(one)}
               </Text>
             </Box>
             {detail !== '' && (

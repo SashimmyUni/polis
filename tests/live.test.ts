@@ -239,6 +239,19 @@ test('the mod keeps its record while the session runs and takes it away when it 
   expect(kept[key]).toBeUndefined()
 })
 
+test('a session whose turn ended asking nothing is idle in its record', NO_PAGE, async ($, on) => {
+  const clock = mock.clock(on)
+  const kept: Record<string, unknown> = {}
+  world(on, kept)
+  const key = `live:${ROOT}:session-1`
+
+  await $.session.start(START)
+  await $.turn.start({ text: 'Fix the login form', turnId: 'turn-1' })
+  await $.turn.complete({ answer: 'Fixed.', durationMs: 4000, isAborted: false, turnId: 'turn-1', reason: 'answer' })
+  await clock.advance(2000)
+  expect(kept[key]).toMatchObject({ state: 'idle', wait: null })
+})
+
 test('the record carries the phase, kind and next step the flow set', NO_PAGE, async ($, on) => {
   const clock = mock.clock(on)
   const kept: Record<string, unknown> = {}

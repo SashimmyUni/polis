@@ -244,7 +244,7 @@ export type LiveSession = {
   /** The project's root: the main working tree, for a worktree too. */
   root: string
   title: string
-  state: 'needs you' | 'working' | 'your turn' | 'idle'
+  state: 'needs you' | 'working' | 'idle'
   /** What it waits on the person for first, and since when. */
   wait: { text: string; at: number } | null
   /** As the flow last set them; empty off the flow. */

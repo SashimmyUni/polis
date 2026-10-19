@@ -146,7 +146,7 @@ test('with another session live, the Agents view opens with both, newest activit
   expect(block.slice(2)).toEqual([
     '●',
     'Implement the Sessions block',
-    'working · this session',
+    'working · you are here',
     'implementing · ctx 30k of 150k · next: /code-review',
     '○',
     'Write the docs',
@@ -181,7 +181,7 @@ test('the other sessions follow by their latest activity, and the heading sums e
   expect(block.filter(text => ['Older', 'Newer'].includes(text))).toEqual(['Newer', 'Older'])
   expect(block).toContain('idle')
   // Nothing worked yet this session: it says only that it is idle.
-  expect(block.slice(2, 5)).toEqual(['●', 'untitled session', 'idle · this session'])
+  expect(block.slice(2, 5)).toEqual(['●', 'untitled session', 'idle · you are here'])
 })
 
 test('sessions follow by when they last changed, not by their heartbeats, this one included', NO_PAGE, async ($, on) => {
