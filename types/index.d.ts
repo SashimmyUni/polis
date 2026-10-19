@@ -240,6 +240,30 @@ export type TurnRecord = {
   at: number
 }
 
+/** How a wayfinder ticket waits: on the person, on no one, or a task (unmarked). */
+export type TicketMark = 'HITL' | 'AFK' | null
+
+/** One open map of the issue tracker, as far as the Tasks view shows it. */
+export type FrontierMap = {
+  number: number
+  name: string
+  /** Its open, unblocked, unclaimed tickets, in the map's order. */
+  open: { number: number; title: string; mark: TicketMark }[]
+  /** Its open tickets someone has taken, with who has them. */
+  claimed: { number: number; title: string; assignees: string[] }[]
+}
+
+/** The tracker's frontier as last read through `gh`, kept per project root. */
+export type Tracker = {
+  /** When the maps were last read whole. */
+  at: number
+  /** When a read was last tried: the next waits five minutes from it. */
+  triedAt: number
+  /** True when the last try failed and `maps` is the read before it. */
+  isFailed: boolean
+  maps: FrontierMap[]
+}
+
 export type MilestoneStatus = 'planned' | 'active' | 'done'
 
 export type Milestone = { id: string; title: string; status: MilestoneStatus }
@@ -314,6 +338,7 @@ declare module 'claude-code' {
       log: ProjectLog | null
       archive: Archive | null
       tick: number
+      tracker: Tracker | null
     }
   }
 }

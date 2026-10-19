@@ -262,6 +262,7 @@ test('git is asked at the start and as each turn comes back, and never between',
   world(on)
   const asked: string[] = []
   on('process.run', (_, e) => {
+    if (e.argv[0] !== 'git') return { value: { exitCode: 1, stdout: '', stderr: '' } as never }
     asked.push(`${e.argv.slice(0, 2).join(' ')} in ${e.init?.cwd} within ${e.init?.timeoutMs}`)
     const stdout =
       e.argv[1] === 'status'

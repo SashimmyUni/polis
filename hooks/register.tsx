@@ -72,6 +72,7 @@ import { REPORT_FILE, reportOf } from './report'
 import { PAGE_FILES, PAGE_REFRESH_SECONDS, cityPage } from './page'
 import { VIEWS, familyOf } from './theme'
 import { dropStaleVerdicts, isVerifier, judge, judgeByChecks, taskToJudge, verdictOf } from './verify'
+import { GH_TIMEOUT, asTracker, isDue, readTracker } from './frontier'
 import { band, pane, stripElements, summary } from './views'
 import type { Actions, Model, StripModel } from './views'
 
@@ -140,6 +141,7 @@ const git = atom({ plugin: 'polis', key: 'git' } as const, null)
 const log = atom({ plugin: 'polis', key: 'log' } as const, null)
 const archive = atom({ plugin: 'polis', key: 'archive' } as const, null)
 const tick = atom({ plugin: 'polis', key: 'tick' } as const, 0)
+const tracker = atom({ plugin: 'polis', key: 'tracker' } as const, null)
 
 const GUIDANCE = {
   id: 'polis:guidance',
@@ -434,6 +436,32 @@ const readGit = async ($: EngineInterface, root: string): Promise<void> => {
   }
 }
 
+// The wayfinder frontier, asked of `gh` at most every five minutes, the time
+// kept with it so that parallel sessions of the project share the wait.
+let isReadingTracker = false
+
+const readFrontier = async ($: EngineInterface, root: string): Promise<void> => {
+  if (root === '' || isReadingTracker) return
+  isReadingTracker = true
+  try {
+    const key = `tracker:${root}`
+    const now = await $.clock.now()
+    const held = await read($, tracker)
+    const last = asTracker(await $.store.get(key)) ?? held
+    if (!isDue(last, now)) {
+      if (held === null && last !== null) await update($, tracker, () => last)
+      return
+    }
+    const next = await readTracker(argv => $.process.run(argv, { cwd: root, timeoutMs: GH_TIMEOUT }), last, now)
+    await update($, tracker, () => next)
+    await $.store.set(key, next)
+  } catch {
+    // The store refused it: the frontier stays as it was.
+  } finally {
+    isReadingTracker = false
+  }
+}
+
 // The project's archive brought in line with the board. The stored archive
 // is read again just before, so that a parallel session's work is not lost.
 const saveArchive = async ($: EngineInterface, here: Here, board: readonly Task[]): Promise<void> => {
@@ -623,6 +651,7 @@ const load = async (
     ui: await read($, ui),
     activity: await read($, activity),
     files: await read($, files),
+    tracker: await read($, tracker),
   }
 }
 
@@ -805,6 +834,7 @@ export const register: Register = (on, options) => {
       await saveArchive($, here, await read($, tasks))
       await saveSession($, here, false)
       void readGit($, root)
+      void readFrontier($, root)
       await refresh($, false)
     } catch (error) {
       say($, 'loading the project', error)
@@ -1198,6 +1228,7 @@ export const register: Register = (on, options) => {
         await saveTasks($, here)
         await saveSession($, here, false)
         void readGit($, here.root)
+        void readFrontier($, here.root)
       } catch (error) {
         say($, 'saving the session', error)
       }

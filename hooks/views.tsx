@@ -17,6 +17,7 @@ import type {
   Skills,
   Task,
   ToolFamily,
+  Tracker,
   Turn,
   TurnRecord,
   Ui,
@@ -29,9 +30,11 @@ import { CHECK_KINDS, checkLines, checksLine, stateOf } from './checks'
 import type { CheckState } from './checks'
 import { cityAlt, layoutFor, quartersOf, renderCity } from './city'
 import { areasOfFiles, gitLine } from './codemap'
+import { hitlWaiting } from './frontier'
 import { avatarAlt, avatarSvg } from './icons'
 import {
   SIZE_LABEL,
+  about,
   agentTree,
   bar,
   clip,
@@ -102,6 +105,8 @@ export type Model = {
   isStill: boolean
   /** The project's archive less what is on the board: what the full city adds. */
   archived: Archive | null
+  /** The wayfinder maps' frontier as last read through `gh`, where it can be. */
+  tracker?: Tracker | null
   /** The next step the flow calls for, in full and as its first move. Nothing sets it yet. */
   nextStep?: { text: string; short: string }
 }
@@ -724,6 +729,49 @@ const tasksView = (el: El, m: Model): RenderElement[] => {
       )
     }),
     ...(rows.length > 60 ? [empty(el, `+${rows.length - 60} more`)] : []),
+    ...frontierBlock(el, m),
+  ]
+}
+
+const TICKET_COLOR = { HITL: C.run, AFK: C.muted } as const
+
+// Each open map of the issue tracker: the tickets that can be taken next,
+// marked by whether they wait on the person, then those already taken. A
+// map with neither is left out, and so is the block without a map.
+const frontierBlock = (el: El, m: Model): RenderElement[] => {
+  const { Box, Text } = el
+  const tracker = m.tracker ?? null
+  const maps = (tracker?.maps ?? []).filter(map => map.open.length + map.claimed.length > 0)
+  if (tracker === null || maps.length === 0) return []
+  const waiting = hitlWaiting(maps)
+  const note = [
+    waiting === 0 ? 'no HITL waiting' : `${waiting} HITL waiting`,
+    ...(tracker.isFailed ? [`as of ${about(m.now - tracker.at)}`] : []),
+  ].join(' · ')
+
+  return [
+    heading(el, m, 'FRONTIER', note),
+    ...maps.flatMap(map => [
+      <Text color={C.text} bold wrap={fit(m)}>
+        {map.name}
+      </Text>,
+      ...map.open.map(ticket => (
+        <Box flexDirection="row" gap={1} marginLeft={2}>
+          {ticket.mark !== null && <Text color={TICKET_COLOR[ticket.mark]}>{ticket.mark}</Text>}
+          <Text color={C.text} wrap={fit(m)}>
+            {ticket.title}
+          </Text>
+        </Box>
+      )),
+      ...map.claimed.map(ticket => (
+        <Box flexDirection={isNarrow(m) ? 'column' : 'row'} gap={isNarrow(m) ? 0 : 1} marginLeft={2}>
+          <Text color={C.muted} wrap={fit(m)}>
+            {ticket.title}
+          </Text>
+          <Text color={C.agent}>{ticket.assignees.map(one => `@${one}`).join(' ')}</Text>
+        </Box>
+      )),
+    ]),
   ]
 }
 
