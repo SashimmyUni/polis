@@ -8,7 +8,7 @@ A Claude Code mod that keeps a project legible while Claude works on it: what ne
 
 **Context**:
 The tokens the session holds in its window right now. It falls after a compact or a clear.
-_Avoid_: token usage, session tokens (those count everything processed and only rise)
+_Avoid_: token usage, session tokens (those count everything processed and only rise), context window (the window is the model's whole capacity, not what the session holds)
 
 **Smart zone**:
 The stretch of context within which the model still reasons sharply.
