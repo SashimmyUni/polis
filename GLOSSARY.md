@@ -51,6 +51,10 @@ _Avoid_: using it for a piece of work inside the repository
 Every task the project has finished, kept permanently, including those long gone from the board.
 _Avoid_: history (that is the record of past prompts), finished projects
 
+**Sub-task**:
+A task that is part of another task, drawn smaller beside its parent.
+_Avoid_: child task, step
+
 ### Where Polis shows itself
 
 **Current city**:
@@ -60,6 +64,10 @@ _Avoid_: live city, ongoing view
 **Full city**:
 The current city with the whole archive built into it.
 _Avoid_: history view, historical city
+
+**District**:
+The part of the city that holds the tasks working in one area of the project. A task's district is where its work lands: what Claude names, what its edits show, or failing both, what its subject suggests.
+_Avoid_: zone, neighbourhood
 
 **Old town**:
 The part of a district in the full city that stands for its oldest finished work, shown by count rather than one building per task.
